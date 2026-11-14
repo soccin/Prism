@@ -1,0 +1,3 @@
+sample_id,sample_type,subject_id,group_id
+SUBJECT01_T01,tumor,SUBJECT01,SUBJECT01
+SUBJECT01_N01,normal,SUBJECT01,SUBJECT01

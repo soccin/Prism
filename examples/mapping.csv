@@ -1,0 +1,4 @@
+sample_id,fastq_dir,filetype,sequence_type
+SUBJECT01_T01,/path/to/FASTQ/RUN_0001_AFLOWCELL1/Project_00000_A/Sample_SUBJECT01_T01_IGO_00000_A_1,fastq,dna
+SUBJECT01_T01,/path/to/FASTQ/RUN_0002_BFLOWCELL2/Project_00000_A/Sample_SUBJECT01_T01_IGO_00000_A_1,fastq,dna
+SUBJECT01_N01,/path/to/FASTQ/RUN_0001_AFLOWCELL1/Project_00000_A/Sample_SUBJECT01_N01_IGO_00000_A_2,fastq,dna

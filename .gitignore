@@ -1,0 +1,5 @@
+._*
+bin/nextflow
+.*.sh.*
+settings.local.json
+CLAUDE.local.md

@@ -2,25 +2,10 @@
 
 Source: https://nf-co.re/oncoanalyser/3.0.0/docs/usage/ and
 https://nf-co.re/oncoanalyser/3.0.0/docs/usage/compute_resources/
-(reviewed 2026-11-12). Commands below are adapted to the local SLURM
-cluster. Nothing has been run.
-
-> Copied into Prism on 2026-11-14 from the project folder where the
-> pipeline was first set up. The text below uses that folder's paths,
-> and the copy of `runOncoanalyser.sh` in section 7 is the version from
-> that folder, not the current one. In Prism the files are:
->
-> | Path in this document | Path in Prism |
-> |---|---|
-> | `runOncoanalyser.sh` | `runOncoanalyser.sh` |
-> | `config/iris.config` | `conf/iris.config` |
-> | `config/genome_GRCh38_hmf.config` | `conf/genome_GRCh38_hmf.config` |
-> | `ENV.sh` | `conf/ENV.sh` |
-> | `params.yaml` | `conf/params.yaml` |
-> | `./bin/nextflow` | `bin/nextflow`, installed by `00.SETUP.sh` |
->
-> The run script now finds these files from the Prism folder, not from
-> the current directory. See `README.md`.
+(reviewed 2026-11-12). Commands below are adapted to IRIS (SLURM,
+Singularity). They are run from the project folder, with Prism cloned
+into it as `Prism/`. File paths without a `Prism/` prefix are relative
+to the Prism folder.
 
 ## 1. What the pipeline does in WGS mode
 
@@ -63,29 +48,27 @@ without tumor RNA, and tumor/normal/donor.
 Recommendation: use **25.10.4**, the version the pipeline's CI
 gates on. 26.04.x should also work. Avoid 26.10.x for now.
 
-### 2b. Local Nextflow install in `bin/`
+### 2b. Local Nextflow install in `Prism/bin/`
 
-Install a pinned launcher in this project's `bin/` and always call
-`./bin/nextflow`:
+Install the pinned launcher once per clone, and always call
+`Prism/bin/nextflow`:
 
 ```bash
-mkdir -p bin
-cd bin
-export NXF_VER=25.10.4
-curl -s https://get.nextflow.io | bash
-cd ..
+bash Prism/00.SETUP.sh
 ```
 
+`00.SETUP.sh` sources `conf/ENV.sh` (which sets `NXF_VER=25.10.4`)
+and runs `curl -s https://get.nextflow.io | bash` in `Prism/bin`.
 The launcher installed with `NXF_VER` set keeps that version as its
 default: `bin/nextflow` contains `NXF_VER=${NXF_VER:-'25.10.4'}`
-(checked 2026-11-12). The run scripts below still export
-`NXF_VER=25.10.4`; that is harmless and makes the version explicit.
+(checked 2026-11-12). `bin/nextflow` is not tracked in git.
 
 ### 2c. Keep everything out of the home folder
 
 Nextflow and Singularity write under `~` (and `work/` under the
-launch directory) by default. These are kept in the project's
-`ENV.sh`; source it in every script before calling `./bin/nextflow`.
+launch directory) by default. These are set in `conf/ENV.sh`, which
+`runOncoanalyser.sh` and `00.SETUP.sh` source. Source it yourself
+before calling `Prism/bin/nextflow` by hand.
 Pipeline folders live under `/scratch/core001/bic/socci/Oncoanalyser/`;
 the Singularity cache is the existing shared
 `/scratch/core001/bic/socci/singularity-cache`.
@@ -173,14 +156,14 @@ later without another download:
 `targeted`/`panel` are left out: there is no built-in GRCh38 panel.
 
 Run this as an `sbatch` job (it downloads and unpacks large files),
-after `source ENV.sh`. For this project the outdir is
+after `source Prism/conf/ENV.sh`. For this project the outdir is
 `/scratch/core002/nds/nf-core`:
 
 ```bash
-./bin/nextflow run nf-core/oncoanalyser \
+Prism/bin/nextflow run nf-core/oncoanalyser \
   -revision 3.0.0 \
   -profile singularity \
-  -c config/iris.config \
+  -c Prism/conf/iris.config \
   --mode prepare_reference \
   --ref_data_types wgs,wts,bwamem2_index,star_index \
   --genome GRCh38_hmf \
@@ -195,10 +178,10 @@ includes everything `wts` needs (FASTA, indexes, and the
 only missing piece for RNA is the STAR index:
 
 ```bash
-./bin/nextflow run nf-core/oncoanalyser \
+Prism/bin/nextflow run nf-core/oncoanalyser \
   -revision 3.0.0 \
   -profile singularity \
-  -c config/iris.config \
+  -c Prism/conf/iris.config \
   --mode prepare_reference \
   --ref_data_types star_index \
   --genome GRCh38_hmf \
@@ -224,7 +207,7 @@ Output lands in `<outdir>/reference_data/3.0.0/`. Delete that run's
 task folders under `NXF_WORK` afterwards. Alternative: download the
 tarballs listed on the usage page manually and `tar -xzvf` them.
 
-`config/genome_GRCh38_hmf.config` points the pipeline at the staged
+`conf/genome_GRCh38_hmf.config` points the pipeline at the staged
 files (passes `nextflow lint`). It sets `params.genomes.GRCh38_hmf`
 (`fasta`, `fai`, `dict`, `img`, `bwamem2_index`, `gridss_index`,
 `star_index`) and `ref_data_hmf_data_path` to the paths above. Use it
@@ -281,10 +264,10 @@ Use `cram`/`crai`. CRAM must be version <= 3.0, with NM tags stored.
 Small CRAMs (< ~10 GB) read >10x slower than BAM; converting to BAM
 first is faster.
 
-## 6. Cluster config (`config/iris.config`)
+## 6. Cluster config (`conf/iris.config`)
 
-The cluster settings live in `config/iris.config`. Pass it with
-`-c config/iris.config`. Per the docs, `-c` is for resources and
+The cluster settings live in `conf/iris.config`. `runOncoanalyser.sh`
+passes it with `-c`. Per the docs, `-c` is for resources and
 executor settings, not pipeline parameters (the reference config in
 step 4 is the documented exception).
 
@@ -319,7 +302,8 @@ What it sets:
   `-B /localscratch/soccin/oncoanalyser/$SLURM_JOB_ID:/tmp -B /localscratch/soccin/oncoanalyser/$SLURM_JOB_ID`
   and the `beforeScript` block sets `TMPDIR`.
 
-`cacheDir` must match `NXF_SINGULARITY_CACHEDIR` from section 2c.
+`cacheDir` must match `NXF_SINGULARITY_CACHEDIR` in `conf/ENV.sh`
+(section 2c).
 Do not add `cpus` or `memory` to the `executor {}` block: since
 Nextflow 26.10 those cap SLURM tasks too.
 
@@ -347,8 +331,8 @@ Notes:
 
 ## 7. Run the analysis
 
-The fixed run parameters are in `params.yaml`. The samplesheet is not
-in it; it is passed to the script as a required argument.
+The fixed run parameters are in `conf/params.yaml`. The samplesheet is
+not in it; it is passed to the script as a required argument.
 
 ```yaml
 mode: 'wgts'
@@ -356,122 +340,60 @@ genome: 'GRCh38_hmf'
 outdir: './out'
 ```
 
-The Nextflow head process runs as its own SLURM job (long-lived, low
-resource) from `runOncoanalyser.sh`. Submit from the project directory.
-Do not run it on isca006 and do not use `srun`. `./runOncoanalyser.sh -h`
-prints the usage.
+The Nextflow head process runs from `runOncoanalyser.sh`, either as its
+own SLURM job (long-lived, low resource) or in the current shell. Start
+it from the project directory. Do not run a full run on isca006 and do
+not use `srun`. `./Prism/runOncoanalyser.sh -h` prints the usage.
 
 New run (new work folder):
 
 ```bash
-sbatch runOncoanalyser.sh oncoanalyser_input.csv
+sbatch ./Prism/runOncoanalyser.sh oncoanalyser_input.csv
 ```
 
 Resume a previous run (reuse its work folder):
 
 ```bash
-sbatch runOncoanalyser.sh oncoanalyser_input.csv /scratch/core001/bic/socci/Oncoanalyser/<YYYYMMDD_HHMMSS>
+sbatch ./Prism/runOncoanalyser.sh oncoanalyser_input.csv /scratch/core001/bic/socci/Oncoanalyser/<YYYYMMDD_HHMMSS>
 ```
 
 The script converts INPUT.csv to an absolute path and passes it as
 `--input`. Use the same samplesheet when resuming; a different one
 changes the task inputs and those tasks rerun.
 
-`runOncoanalyser.sh`:
+What `runOncoanalyser.sh` does (read the script for details):
 
-```bash
-#!/bin/bash
-#SBATCH -J oncoanalyser
-#SBATCH -p cmobic_cpu
-#SBATCH -c 2
-#SBATCH --mem=8G
-#SBATCH -t 7-00:00:00
-#SBATCH -o oncoanalyser.%j.out
+1. Checks the arguments and the samplesheet.
+2. Finds the Prism folder. `sbatch` runs a copy of the script from the
+   SLURM spool folder, so it tries the folder of the script,
+   `SBATCH_SCRIPT_DIR` (set by the `~/bin/sbatch` wrapper), and the
+   submitted path from `scontrol show job`, in that order.
+3. Checks that `Prism/bin/nextflow` is installed.
+4. Sources `conf/ENV.sh` and, if given, sets `NXF_WORK` to `WORK_DIR`.
+5. Sets up the head job temp folder (below).
+6. Prints `PRISM=` (Prism folder and git version), `INPUT=`,
+   `NXF_WORK=` and `TMPDIR=`.
+7. Runs:
 
-# Nextflow head job for nf-core/oncoanalyser 3.0.0.
-# Submit from the project directory:
-#   sbatch runOncoanalyser.sh INPUT.csv [WORK_DIR]
-# INPUT.csv: the oncoanalyser samplesheet (e.g. oncoanalyser_input.csv).
-# Optional WORK_DIR: an existing
-#   /scratch/core001/bic/socci/Oncoanalyser/<YYYYMMDD_HHMMSS>
-# folder to -resume a previous run; otherwise ENV.sh makes a new one.
+   ```bash
+   "$PDIR/bin/nextflow" run nf-core/oncoanalyser \
+       -revision 3.0.0 \
+       -profile singularity \
+       -config "$PDIR/conf/genome_GRCh38_hmf.config" \
+       -c "$PDIR/conf/iris.config" \
+       -params-file "$PDIR/conf/params.yaml" \
+       --input "$INPUT" \
+       -resume
+   ```
 
-set -eu
-
-usage() {
-    cat <<EOF
-Usage: sbatch runOncoanalyser.sh INPUT.csv [WORK_DIR]
-
-Run nf-core/oncoanalyser 3.0.0 as a SLURM head job.
-Submit from the project directory.
-
-  INPUT.csv  oncoanalyser samplesheet (e.g. oncoanalyser_input.csv)
-  WORK_DIR   existing /scratch/core001/bic/socci/Oncoanalyser/<YYYYMMDD_HHMMSS>
-             folder to -resume; omit to start a new run in a new folder
-  -h         show this help
-EOF
-}
-
-if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
-    usage
-    exit 0
-fi
-
-if [ $# -lt 1 ] || [ $# -gt 2 ]; then
-    usage >&2
-    exit 1
-fi
-
-INPUT=$(realpath "$1")
-if [ ! -f "$INPUT" ]; then
-    echo "INPUT.csv not found: $1" >&2
-    exit 1
-fi
-
-source ENV.sh
-if [ -n "${2:-}" ]; then
-    if [ ! -d "$2" ]; then
-        echo "WORK_DIR not found: $2" >&2
-        exit 1
-    fi
-    export NXF_WORK=$2
-fi
-
-# Never write to the node's /tmp: head job temp files (Nextflow JVM,
-# Singularity image pulls) go to node-local /localscratch.
-# A new folder per run (mktemp), so this works both via sbatch and
-# when run directly (./runOncoanalyser.sh), where SLURM_JOB_ID is
-# unset or belongs to the interactive session.
-# No automatic cleanup; the folder is left for manual removal.
-mkdir -p /localscratch/soccin/oncoanalyser
-NXF_LOCAL_TMP=$(mktemp -d -p /localscratch/soccin/oncoanalyser head_XXXXXX)
-export TMPDIR=$NXF_LOCAL_TMP
-export SINGULARITY_TMPDIR=$NXF_LOCAL_TMP
-export APPTAINER_TMPDIR=$NXF_LOCAL_TMP
-export NXF_OPTS="$NXF_OPTS -Djava.io.tmpdir=$NXF_LOCAL_TMP"
-
-echo "INPUT=$INPUT"
-echo "NXF_WORK=$NXF_WORK"
-echo "TMPDIR=$TMPDIR"
-
-./bin/nextflow run nf-core/oncoanalyser \
-    -revision 3.0.0 \
-    -profile singularity \
-    -config config/genome_GRCh38_hmf.config \
-    -c config/iris.config \
-    -params-file params.yaml \
-    --input "$INPUT" \
-    -resume
-```
-
-`ENV.sh` sets `NXF_WORK`, so no `-work-dir` is needed; `work/` goes to
-`/scratch/core001/bic/socci/Oncoanalyser/<YYYYMMDD_HHMMSS>`, a new folder
-each time `ENV.sh` is sourced (e.g. `20261112_193000`). `-resume` only
-reuses tasks from the same work folder, so to resume pass that folder as
-the second argument. The samplesheet and folder in use are printed in
-`oncoanalyser.<jobid>.out` as `INPUT=...` and `NXF_WORK=...`; the folder
-is also shown as `workDir` in the run header and in `.nextflow.log`.
-Results go to `./out`.
+`conf/ENV.sh` sets `NXF_WORK`, so no `-work-dir` is needed; `work/` goes
+to `/scratch/core001/bic/socci/Oncoanalyser/<YYYYMMDD_HHMMSS>`, a new
+folder each time `conf/ENV.sh` is sourced (e.g. `20261112_193000`).
+`-resume` only reuses tasks from the same work folder, so to resume
+pass that folder as the second argument. The samplesheet and folder in
+use are printed in `oncoanalyser.<jobid>.out` as `INPUT=...` and
+`NXF_WORK=...`; the folder is also shown as `workDir` in the run header
+and in `.nextflow.log`. Results go to `./out` in the project directory.
 
 The head job writes its temporary files (Nextflow JVM, Singularity image
 pulls) to a new `/localscratch/soccin/oncoanalyser/head_XXXXXX` folder (made by
@@ -499,19 +421,23 @@ resubmitting without it starts a new folder and reruns everything.
 
 ## 9. Suggested order of work
 
-1. Install Nextflow 25.10.4 in `./bin` (section 2b), set the
-   environment variables (section 2c), and check Singularity or
-   Apptainer is available on the compute nodes.
+1. Clone Prism into the project folder, run `bash Prism/00.SETUP.sh`
+   (section 2b), check the environment variables in `conf/ENV.sh`
+   (section 2c), and check Singularity or Apptainer is available on
+   the compute nodes.
 2. Inspect the WGS inputs: FASTQ or BAM? If BAM, check reference
    contigs, `-Y`, MC tags, and HLA ALT contigs.
 3. Decide GRCh37_hmf vs GRCh38_hmf.
-4. Stage reference data (step 4) and write
-   `config/genome_GRCh38_hmf.config`.
-5. Check `config/iris.config`, write `params.yaml` and the
-   samplesheet.
+4. Stage reference data (section 4) and check
+   `conf/genome_GRCh38_hmf.config`.
+5. Check `conf/iris.config` and `conf/params.yaml`, and build the
+   samplesheet with `Prism/scripts/makeOncoanalyserInput.R` (see
+   `README.md`).
 6. Run one tumor/normal pair first; check the ORANGE report and
    PURPLE purity/ploidy before submitting the full cohort.
-7. Delete the `work/` directory once outputs are verified.
+7. Delete the run's work folder under
+   `/scratch/core001/bic/socci/Oncoanalyser/` once outputs are
+   verified.
 
 ## 10. Open questions for this project
 

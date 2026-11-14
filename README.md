@@ -12,7 +12,7 @@ Clone Prism into the project folder, then install Nextflow into
 
 ```
 cd <project folder>
-git clone <Prism repo URL> Prism
+git clone https://github.com/soccin/Prism.git Prism
 bash Prism/00.SETUP.sh
 ```
 
@@ -47,7 +47,12 @@ Outputs go to the project folder, not to `Prism/`:
 
 The Nextflow work folder is a new
 `/scratch/core001/bic/socci/Oncoanalyser/<YYYYMMDD_HHMMSS>` for each
-run. Its path is printed as `NXF_WORK=` at the start of the log.
+run. The log starts with four lines:
+
+- `PRISM=`: the Prism folder and its git version (`git describe`)
+- `INPUT=`: the samplesheet, as an absolute path
+- `NXF_WORK=`: the work folder
+- `TMPDIR=`: the head job temp folder
 
 ## Resume
 
@@ -110,4 +115,5 @@ are not removed automatically.
 - `docs/oncoanalyser_3.0.0_WGS_instructions.md`: how the pipeline is
   run in WGS mode and why the settings were chosen
 - `docs/NF_SCRIPTING_INFO.md`: rules for writing Nextflow run scripts
-  and configs on IRIS
+  and configs on IRIS, and lessons from building Prism. Copy it into
+  the next pipeline's wrapper repo.

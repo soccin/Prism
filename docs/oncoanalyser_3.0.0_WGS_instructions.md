@@ -54,7 +54,7 @@ Install the pinned launcher once per clone, and always call
 `Prism/bin/nextflow`:
 
 ```bash
-bash Prism/00.SETUP.sh
+./Prism/00.SETUP.sh
 ```
 
 `00.SETUP.sh` sources `conf/ENV.sh` (which sets `NXF_VER=25.10.4`)
@@ -421,7 +421,7 @@ resubmitting without it starts a new folder and reruns everything.
 
 ## 9. Suggested order of work
 
-1. Clone Prism into the project folder, run `bash Prism/00.SETUP.sh`
+1. Clone Prism into the project folder, run `./Prism/00.SETUP.sh`
    (section 2b), check the environment variables in `conf/ENV.sh`
    (section 2c), and check Singularity or Apptainer is available on
    the compute nodes.

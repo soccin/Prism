@@ -367,7 +367,7 @@ used. Steps 2 and 3 have not been tested in a job (section 14).
 - **Repo folder:** find `PDIR` as in section 6 and stop with an error if
   it is not found.
 - **Nextflow:** stop if `$PDIR/bin/nextflow` is missing, and tell the
-  user to run `bash $PDIR/00.SETUP.sh`.
+  user to run `$PDIR/00.SETUP.sh`.
 - **It must work both via `sbatch` and run directly.** Nothing in the
   head script may depend on `SLURM_*` variables. The one use, the
   `scontrol` lookup, is a fallback that runs only when `SLURM_JOB_ID` is
@@ -393,7 +393,9 @@ used. Steps 2 and 3 have not been tested in a job (section 14).
 ## 8. 00.SETUP.sh
 
 - Run once per clone, from the project folder:
-  `bash Prism/00.SETUP.sh`. It is not executable; run it with `bash`.
+  `./Prism/00.SETUP.sh`. It is executable (mode 755), as in adagio.
+  - What went wrong: Prism first committed it as 644, so it could only
+    be run with `bash`.
 - It sources `conf/ENV.sh`. That keeps `NXF_VER` in one file, and the
   launcher's first download of the Nextflow runtime goes to `NXF_HOME`,
   not `~/.nextflow`.

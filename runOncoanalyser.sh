@@ -82,7 +82,7 @@ fi
 
 if [ ! -x "$PDIR/bin/nextflow" ]; then
     echo "Nextflow is not installed in $PDIR/bin." >&2
-    echo "Run: bash $PDIR/00.SETUP.sh" >&2
+    echo "Run: $PDIR/00.SETUP.sh" >&2
     exit 1
 fi
 

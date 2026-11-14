@@ -13,7 +13,7 @@ Clone Prism into the project folder, then install Nextflow into
 ```
 cd <project folder>
 git clone https://github.com/soccin/Prism.git Prism
-bash Prism/00.SETUP.sh
+./Prism/00.SETUP.sh
 ```
 
 `00.SETUP.sh` installs the Nextflow version pinned by `NXF_VER` in

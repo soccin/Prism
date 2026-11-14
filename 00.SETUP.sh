@@ -3,7 +3,7 @@
 # Prism SETUP
 #
 # Run once after cloning:
-#   bash Prism/00.SETUP.sh
+#   ./Prism/00.SETUP.sh
 #
 
 set -eu

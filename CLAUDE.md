@@ -24,7 +24,7 @@ wrapper, which gets its own repo and a copy of that file.
 Run from the project folder (the parent of `Prism/`):
 
 ```
-bash Prism/00.SETUP.sh                                  # once per clone: install Nextflow in Prism/bin
+./Prism/00.SETUP.sh                                     # once per clone: install Nextflow in Prism/bin
 Rscript Prism/scripts/makeOncoanalyserInput.R mapping.csv manifest.csv oncoanalyser_input.csv
 sbatch ./Prism/runOncoanalyser.sh INPUT.csv [WORK_DIR]  # as a SLURM job
 ./Prism/runOncoanalyser.sh INPUT.csv [WORK_DIR]         # in the current shell

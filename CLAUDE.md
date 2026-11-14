@@ -16,8 +16,8 @@ project folder. Nothing a run writes belongs in the repo.
 
 Read `docs/NF_SCRIPTING_INFO.md` before changing the run script or any
 config. It lists the rules these files follow and the mistakes that led
-to each rule. It uses the paths of the folder Prism was copied from;
-the table at its top maps them to Prism paths.
+to each rule. It is also the starting point for the next pipeline
+wrapper, which gets its own repo and a copy of that file.
 
 ## Commands
 

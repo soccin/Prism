@@ -29,7 +29,30 @@ suppressPackageStartupMessages({
     library(glue)
 })
 
+usage <- "Usage: Rscript Prism/scripts/makeOncoanalyserInput.R [mapping.csv] [manifest.csv] [output.csv]
+
+Build the oncoanalyser samplesheet from mapping.csv and manifest.csv.
+Defaults: mapping.csv, manifest.csv, oncoanalyser_input.csv in the
+current directory. Templates are in Prism/examples.
+
+  mapping.csv  : sample_id,fastq_dir,filetype,sequence_type
+  manifest.csv : sample_id,sample_type,subject_id,group_id
+"
+
 args <- commandArgs(trailingOnly = TRUE)
+if (any(args %in% c("-h", "--help"))) {
+    cat(usage)
+    quit(status = 0)
+}
+bad_opts <- str_subset(args, "^-")
+if (length(bad_opts) > 0) {
+    cat(glue("Unknown option: {str_c(bad_opts, collapse = ' ')}"), "\n\n", usage, sep = "")
+    quit(status = 1)
+}
+if (length(args) > 3) {
+    cat("Too many arguments\n\n", usage, sep = "")
+    quit(status = 1)
+}
 mapping_file <- if (length(args) >= 1) args[1] else "mapping.csv"
 manifest_file <- if (length(args) >= 2) args[2] else "manifest.csv"
 output_file <- if (length(args) >= 3) args[3] else "oncoanalyser_input.csv"

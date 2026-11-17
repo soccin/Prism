@@ -283,8 +283,9 @@ What it sets:
   | > 2h and <= 3h | `cmobic_short` | 3h |
   | > 3h, or none | `cmobic_cpu` | 7 days |
 
-- `resourceLimits = [ cpus: 32, memory: 120.GB, time: 7.d ]`; the
-  time cap is the `cmobic_cpu` limit.
+- `resourceLimits = [ cpus: 56, memory: 1000.GB, time: 7.d ]`; the
+  cpus and memory caps are the smallest node across the three
+  partitions, and the time cap is the `cmobic_cpu` limit.
 - Retry on any exit code except 1, up to 3 times.
 - `executor { queueSize = 50; submitRateLimit = '10 sec' }`
 - Singularity enabled, `autoMounts`, `cacheDir` on shared storage,
@@ -315,8 +316,9 @@ Notes:
   multiplied by `task.attempt`), so nothing goes to the short
   partitions until short tools get `withName:` time overrides. Set
   those from real runtimes in the trace report of a first run.
-- Set `resourceLimits` cpus and memory to the largest node in the
-  partitions. ESVEE asks for 32 CPUs / 96 GB in Hartwig's settings.
+- Set `resourceLimits` cpus and memory to the smallest node across the
+  partitions a task can be sent to, so every request fits on any of
+  them. ESVEE asks for 32 CPUs / 96 GB in Hartwig's settings.
 - WiGiTS tools exit with code 1 on any real failure, so only non-1
   exit codes (OOM, node issues) are retried.
 - The docs' retry example uses `check_max(...)`, an old nf-core

@@ -345,9 +345,14 @@ used. Steps 2 and 3 have not been tested in a job (section 14).
           return 'cmobic_short'
       return 'cmobic_cpu'
   }
-  resourceLimits = [ cpus: 32, memory: 120.GB, time: 7.d ]
+  resourceLimits = [ cpus: 56, memory: 1000.GB, time: 7.d ]
   ```
 - **The time cap is 7 days.** An earlier draft had 48h.
+- **The cpus and memory caps are the smallest node** across the three
+  partitions (56 CPUs, about 1 TB), so a task fits on any node. Check
+  with `sinfo -p cpushort,cmobic_short,cmobic_cpu -N -o "%P %N %c %m"`.
+  An earlier version had 32 CPUs / 120 GB, which silently cut any
+  larger request (`process_high_memory` asks for 200 GB).
 - **Head job header:** `-p cmobic_cpu -c 2 --mem=8G -t 7-00:00:00`.
 
 ## 7. Run script conventions (see runOncoanalyser.sh)

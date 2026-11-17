@@ -286,6 +286,9 @@ What it sets:
 - `resourceLimits = [ cpus: 56, memory: 1000.GB, time: 7.d ]`; the
   cpus and memory caps are the smallest node across the three
   partitions, and the time cap is the `cmobic_cpu` limit.
+- `withName: 'PURPLE' { memory = { 96.GB * task.attempt } }`. PURPLE
+  loads the whole somatic VCF into the Java heap, and the default
+  36 GB failed with `OutOfMemoryError` on a tumor-only sample.
 - Retry on any exit code except 1, up to 3 times.
 - `executor { queueSize = 50; submitRateLimit = '10 sec' }`
 - Singularity enabled, `autoMounts`, `cacheDir` on shared storage,
@@ -320,7 +323,9 @@ Notes:
   partitions a task can be sent to, so every request fits on any of
   them. ESVEE asks for 32 CPUs / 96 GB in Hartwig's settings.
 - WiGiTS tools exit with code 1 on any real failure, so only non-1
-  exit codes (OOM, node issues) are retried.
+  exit codes (SLURM OOM kill, node issues) are retried. A Java
+  `OutOfMemoryError` also exits 1 and is not retried; raise the
+  memory in a `withName:` block instead.
 - The docs' retry example uses `check_max(...)`, an old nf-core
   helper. With `resourceLimits` write `memory = { 64.GB * task.attempt }`
   instead; do not copy the `check_max` line.

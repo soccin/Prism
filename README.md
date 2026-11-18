@@ -63,7 +63,20 @@ sbatch ./Prism/runOncoanalyser.sh oncoanalyser_input.csv /scratch/core001/bic/so
 ```
 
 Resume from the same project folder as the first run, because Nextflow
-keeps its run history in `.nextflow/` there.
+keeps its run history in `.nextflow/` there. `-resume` continues the
+last run in that history, so do not start another `nextflow run` from
+the project folder in between.
+
+If a task failed for lack of memory, raise its starting resources in
+`conf/iris.config` before resuming: on resume, retries start again at
+attempt 1. Change only resources (`cpus`, `memory`, `time`), the
+partition or QOS settings, or `errorStrategy`. These do not change the
+task hash, so finished tasks stay cached. Changing an `ext.*` setting
+does, and reruns the process and everything after it.
+
+In the first minutes of a resumed run, `.nextflow.log` should list the
+finished tasks as `Cached process`; only unfinished tasks should be
+`Submitted`.
 
 ## Layout
 
@@ -100,11 +113,13 @@ The paths are specific to IRIS and to user `soccin`:
 
 - `conf/ENV.sh`: `NXF_HOME`, `NXF_WORK` and the Singularity cache under
   `/scratch/core001/bic/socci`
-- `conf/iris.config`: partitions, the Singularity cache, and temp
-  folders under `/localscratch/soccin/oncoanalyser`
+- `conf/iris.config`: partitions, QOS `priority` on the cmobic
+  partitions, resource caps (52 CPUs, 975 GB), more memory or CPUs for
+  PURPLE, ESVEE and SAGE somatic, retries, the Singularity cache, and
+  temp folders under `/localscratch/soccin/oncoanalyser`
 - `conf/genome_GRCh38_hmf.config`: reference data under
   `/scratch/core002/nds/nf-core/reference_data/3.0.0`
-- `runOncoanalyser.sh`: partition `cmobic_cpu`, head job temp folder
+- `runOncoanalyser.sh`: partition `cmobic_cpu`, QOS `priority`, head job temp folder
   under `/localscratch/soccin/oncoanalyser`
 
 No job writes to a node's `/tmp`. The temp folders on `/localscratch`

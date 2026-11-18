@@ -283,14 +283,29 @@ What it sets:
   | > 2h and <= 3h | `cmobic_short` | 3h |
   | > 3h, or none | `cmobic_cpu` | 7 days |
 
-- `resourceLimits = [ cpus: 56, memory: 1000.GB, time: 7.d ]`; the
-  cpus and memory caps are the smallest node across the three
-  partitions, and the time cap is the `cmobic_cpu` limit.
+- QOS `priority` (`--qos=priority` through `clusterOptions`) for
+  tasks on `cmobic_cpu` and `cmobic_short`, none for tasks listed for
+  `cpushort`, which allows only `normal`. `priority` puts the tasks
+  ahead of `normal` jobs waiting for the cmobic partitions; it has no
+  limits and does not change preemption.
+- `resourceLimits = [ cpus: 52, memory: 975.GB, time: 7.d ]`: the most
+  SLURM can allocate on any node of the three partitions (4 cores and
+  20 GB per node are reserved, and `cpushort` sets
+  `MaxCPUsPerNode=52` and `MaxMemPerNode=998557` MB). The time cap is
+  the `cmobic_cpu` limit.
 - `withName: 'PURPLE' { memory = { 96.GB * task.attempt } }`. PURPLE
   loads the whole somatic VCF into the Java heap, and the default
   36 GB failed with `OutOfMemoryError` on a tumor-only sample.
-- Retry on any exit code except 1, up to 3 times.
-- `executor { queueSize = 50; submitRateLimit = '10 sec' }`
+- ESVEE: 24 CPUs (not scaled by attempt) and `216.GB * task.attempt`
+  (default 12 CPUs / 72 GB). See the notes below.
+- SAGE somatic: `24 * task.attempt` CPUs and `144.GB * task.attempt`
+  (default 12 CPUs / 72 GB), the pipeline's own attempt-2 size.
+- Retry every failure once; after that, retry any exit code except 1,
+  up to 3 retries in all.
+- `executor { queueSize = 200; submitRateLimit = '10 sec' }`. At 50,
+  alignment used about half of `cmobic_cpu`, which fits about 91
+  12-CPU tasks; 200 fills it, and the rest wait in SLURM with QOS
+  `priority`.
 - Singularity enabled, `autoMounts`, `cacheDir` on shared storage,
   `pullTimeout = '2h'`.
 - No writes to the node's `/tmp`. Each task (one SLURM job) gets its
@@ -319,13 +334,34 @@ Notes:
   multiplied by `task.attempt`), so nothing goes to the short
   partitions until short tools get `withName:` time overrides. Set
   those from real runtimes in the trace report of a first run.
-- Set `resourceLimits` cpus and memory to the smallest node across the
-  partitions a task can be sent to, so every request fits on any of
-  them. ESVEE asks for 32 CPUs / 96 GB in Hartwig's settings.
-- WiGiTS tools exit with code 1 on any real failure, so only non-1
-  exit codes (SLURM OOM kill, node issues) are retried. A Java
-  `OutOfMemoryError` also exits 1 and is not retried; raise the
-  memory in a `withName:` block instead.
+- Set `resourceLimits` cpus and memory to what SLURM can allocate on
+  the smallest node across the partitions a task can be sent to, so
+  every request fits on any of them. A job listed for several
+  partitions must be valid in each one (`EnforcePartLimits=ALL`).
+  Check a request with `/usr/bin/sbatch --test-only`, which submits
+  nothing.
+- WiGiTS tools exit with code 1 on any real failure, and a Java
+  `OutOfMemoryError` also exits 1. So every failure is retried once,
+  with memory doubled by `task.attempt`; after that only non-1 exit
+  codes (SLURM OOM kill, node issues) are retried. A real tool failure
+  therefore runs twice before the pipeline stops. Before this rule, a
+  PURPLE and an ESVEE heap error each stopped a whole run.
+- ESVEE memory depends on the number of chimeric reads, not the
+  depth. In a run of 15 WGS groups (Nov 2026), on the default 72 GB,
+  every group with more than about 300 M chimeric reads (`pctChimeras`
+  x total reads, tumor plus normal) was killed at the prep BAM sort
+  (exit 137) or ran out of Java heap (exit 1). One with 571 M chimeric
+  reads was still killed with 144 GB and passed with 216 GB. Groups
+  with few chimeric reads finished ESVEE in 10 to 75 min, so the larger
+  request costs little for them. 24 CPUs ran ESVEE prep 1.4 to 2 times
+  faster than 12; 36 was no faster than 24.
+- `MaxRSS` (sacct) and `peak_rss` (trace) do not show how much memory
+  a Java tool needs: the module sets the heap to 95% of the request,
+  and the heap fills up to it.
+- SAGE somatic used 97% of 12 CPUs for 1 to 5.3 h. The gain from
+  24 CPUs is expected but not yet measured.
+- ESVEE asks for 32 CPUs / 96 GB in Hartwig's settings. That is less
+  memory than the 144 GB on which the group above was still killed.
 - The docs' retry example uses `check_max(...)`, an old nf-core
   helper. With `resourceLimits` write `memory = { 64.GB * task.attempt }`
   instead; do not copy the `check_max` line.
@@ -333,6 +369,9 @@ Notes:
   page) can be added as `withName:` blocks if defaults are too small:
   REDUX 72 GB/16 CPU, SAGE 72 GB/16 CPU, ESVEE 96 GB/32 CPU,
   LILAC 64 GB/16 CPU, PURPLE 40 GB/8 CPU, alignment 72 GB/12 CPU.
+  Use the selector from the pipeline's `conf/modules.config` (for
+  example `'.*:ESVEE_CALLING:ESVEE'`), which matches the full process
+  name `NFCORE_ONCOANALYSER:WGTS:ESVEE_CALLING:ESVEE`.
 - Pre-pulling the Singularity images into `cacheDir` once avoids
   timeouts on the first run.
 
@@ -367,6 +406,14 @@ sbatch ./Prism/runOncoanalyser.sh oncoanalyser_input.csv /scratch/core001/bic/so
 The script converts INPUT.csv to an absolute path and passes it as
 `--input`. Use the same samplesheet when resuming; a different one
 changes the task inputs and those tasks rerun.
+
+On resume, retries start again at attempt 1. If a task failed for
+lack of memory, raise its starting memory in `conf/iris.config`
+first. Resource, partition, QOS and `errorStrategy` settings are not
+part of the task hash, so changing them keeps finished tasks cached.
+`ext.*` settings used by a module script are part of it: changing one
+reruns that process and everything after it. In the first minutes,
+`.nextflow.log` should show the finished tasks as `Cached process`.
 
 What `runOncoanalyser.sh` does (read the script for details):
 

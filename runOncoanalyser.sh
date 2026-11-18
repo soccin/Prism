@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH -J oncoanalyser
 #SBATCH -p cmobic_cpu
+#SBATCH --qos=priority
 #SBATCH -c 2
 #SBATCH --mem=8G
 #SBATCH -t 7-00:00:00

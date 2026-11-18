@@ -3,7 +3,9 @@
 Lessons from building Prism (https://github.com/soccin/Prism), the
 wrapper for nf-core/oncoanalyser 3.0.0. First written 2026-11-13, when
 the pipeline was set up directly in a project folder. Rewritten
-2026-11-14, after that setup was moved into the Prism repo.
+2026-11-14, after that setup was moved into the Prism repo. Updated
+2026-11-18 after the first full runs (15 WGS groups): sections 5, 6, 9,
+10, 11, 14, 16 and the new section 17.
 
 Each new pipeline gets its own wrapper repo with its own name, and this
 file is copied into that repo's `docs/`. Read all of it, and these,
@@ -274,6 +276,26 @@ Prism/bin/nextflow -c Prism/conf/iris.config config -flat
   recreate the user's folder. Use a throwaway one:
   `NXF_VER=25.10.4 NXF_HOME=/localscratch/soccin/<task>/nxf_home Prism/bin/nextflow lint <file>`.
   Both commands download the runtime into `NXF_HOME` the first time.
+- **`lint` and `config` write `.nextflow.log`** in the current folder.
+  In a project folder that rotates the run's log (`.nextflow.log`
+  becomes `.nextflow.log.1`). Put `-log <file>` before the command, for
+  example `Prism/bin/nextflow -log /localscratch/soccin/<task>/lint.log lint <file>`.
+- **Check a SLURM request without submitting it:**
+  `/usr/bin/sbatch --test-only -p <partitions> --qos=<qos> -c <cpus> --mem=<MB>M -t <time> --wrap=true`.
+  It applies the partition, QOS and node limits and prints an estimated
+  start, or the reason the job would be rejected. No job is created.
+- **Test Nextflow behavior (caching, retries, selectors) with a small
+  local workflow,** not with the pipeline:
+  - Use `executor = 'local'` and trivial `echo` scripts.
+  - Run it from a folder under `/localscratch/soccin/<task>/`, never
+    from the project folder: a `run` there adds to `.nextflow/history`,
+    and the next `-resume` would continue the test instead of the real
+    run. The Bash tool cannot `cd` and run in one call; use
+    `env -C <folder> ... Prism/bin/nextflow -log <file> run ...`.
+  - Mirror the real process name. A subworkflow called from the entry
+    workflow is named `CALLING:ESV`, which `'.*:CALLING:ESV'` does not
+    match; wrap it in one more workflow, as in
+    `NFCORE_ONCOANALYSER:WGTS:...`.
 - **"Write X, do not run"** means: write it, check it as above, and stop.
   Do not execute it or submit it.
 - Do not start a pipeline run or submit a job unless the user asks.
@@ -345,15 +367,62 @@ used. Steps 2 and 3 have not been tested in a job (section 14).
           return 'cmobic_short'
       return 'cmobic_cpu'
   }
-  resourceLimits = [ cpus: 56, memory: 1000.GB, time: 7.d ]
+  resourceLimits = [ cpus: 52, memory: 975.GB, time: 7.d ]
   ```
 - **The time cap is 7 days.** An earlier draft had 48h.
-- **The cpus and memory caps are the smallest node** across the three
-  partitions (56 CPUs, about 1 TB), so a task fits on any node. Check
-  with `sinfo -p cpushort,cmobic_short,cmobic_cpu -N -o "%P %N %c %m"`.
-  An earlier version had 32 CPUs / 120 GB, which silently cut any
-  larger request (`process_high_memory` asks for 200 GB).
-- **Head job header:** `-p cmobic_cpu -c 2 --mem=8G -t 7-00:00:00`.
+- **`EnforcePartLimits=ALL`:** a job listed for several partitions
+  (`cpushort,cmobic_short`) is rejected at submission unless it is
+  valid in every one of them: QOS, CPUs and memory.
+- **The cpus and memory caps are what SLURM can allocate** on the
+  smallest node of the three partitions, so a task fits on any node.
+  - SLURM reserves 4 cores and 20 GB on each node (`CoreSpecCount`,
+    `MemSpecLimit` in `scontrol show node <node>`): the 56-CPU nodes
+    have 52 allocatable CPUs.
+  - `cpushort` also sets `MaxCPUsPerNode=52` and
+    `MaxMemPerNode=998557` MB (`scontrol show partition cpushort`).
+    `975.GB` in Nextflow is 998400 MB (Nextflow's GB is 1024^3 bytes).
+  - `sinfo -N -o "%P %N %c %m"` shows the physical totals (56 CPUs,
+    1031007 MB), not what can be allocated.
+  - What went wrong: an earlier version had 32 CPUs / 120 GB, which
+    silently cut any larger request (`process_high_memory` asks for
+    200 GB). The next had 56 CPUs / 1000 GB, from `sinfo`; a 980 GB
+    request listed for `cpushort,cmobic_short` failed
+    `sbatch --test-only` with "Memory required by task is not
+    available".
+- **Head job header:** `-p cmobic_cpu --qos=priority -c 2 --mem=8G -t 7-00:00:00`.
+  Decision (2026-11-18): the head job gets QOS `priority`, because the
+  whole pipeline waits while it is pending.
+
+### QOS
+Decision (2026-11-18, the user sets policy for the cmobic partitions):
+the head job and all tasks on the cmobic partitions run with QOS
+`priority`.
+- `cmobic_cpu` and `cmobic_short` allow QOS `normal` (the default) and
+  `priority` for the core001 account; `cpushort` allows only `normal`
+  (`AllowQos` in `scontrol show partition`).
+- `priority` has QOS priority 1000 (the highest), and
+  `PriorityWeightQOS` is 5000 (`sprio -w`), so it adds 5000 to a job's
+  priority. Our jobs had 46 to 50 under `normal`. It has no limits and
+  the same usage charge (`sacctmgr show qos`).
+- Preemption is by partition tier (`PreemptType=preempt/partition_prio`),
+  not by QOS: `cmobic_cpu` jobs already requeue jobs in
+  `cmobic_preempt`, which runs on the same nodes.
+- The cmobic nodes are shared with other accounts (core005, bergerm1,
+  donoghum, shahr2); `priority` puts our jobs ahead of their `normal`
+  jobs.
+- In `conf/iris.config`, tied to the queue rule:
+  ```groovy
+  clusterOptions = { task.queue.contains('cpushort') ? null : '--qos=priority' }
+  ```
+  - `--qos=priority` on a job listed for `cpushort,cmobic_short` fails
+    with "Invalid qos specification" (`EnforcePartLimits=ALL`).
+  - `null` is the unset value, the same as before the QOS was added.
+  - `task.queue` can be read in another directive's closure (tested
+    locally with Nextflow 25.10.4).
+- Before this, every job ran with `normal`. In the first full runs no
+  task waited more than 2 minutes in the queue, so the QOS would not
+  have changed them. It matters when the cmobic partitions are full,
+  for example with a larger `executor.queueSize`.
 
 ## 7. Run script conventions (see runOncoanalyser.sh)
 
@@ -419,6 +488,28 @@ used. Steps 2 and 3 have not been tested in a job (section 14).
   - `-resume` needs `.nextflow/` (the run history) in the launch folder,
     so resume from the same project folder. Without it, Nextflow prints
     "Option `-resume` is ignored".
+- **`-resume` continues the last run in `.nextflow/history`.** Do not
+  start any other `nextflow run` from the project folder before a
+  resume.
+- **Retries start again at attempt 1 on resume.** A task that passed
+  only on a retry with more memory stays cached, but a task that never
+  passed gets the attempt-1 resources again. Raise its starting
+  resources in the config before resuming.
+- **What is in the task hash** (Nextflow docs, "Cache and resume";
+  checked with a local test on Nextflow 25.10.4, 2026-11-18):
+  - Tested: changing `cpus`, `memory`, `errorStrategy` or
+    `clusterOptions` keeps finished tasks cached, including tasks that
+    passed only on attempt 3, and even when the script prints
+    `task.cpus`, `task.memory` or `task.clusterOptions`.
+  - Not tested, but also directives and not in the documented hash
+    list: `time`, `queue`, `resourceLimits`.
+  - `ext.*` values that a module script uses are in the hash. Adding
+    `ext.args` reran the process and every task after it.
+  - So before a resume, change only directives. Leave `ext.args` and
+    other `ext.*` changes for a new run.
+- **Check the first minutes of a resume:** `.nextflow.log` should show
+  finished tasks as `Cached process` and submit only the unfinished
+  ones. If it submits tasks that had finished, stop the head job.
 - **Large remote files** go into the work folder and can be cut off.
   - Example: the 27 GB STAR index tarball. Nextflow retries the whole
     file.
@@ -434,10 +525,33 @@ Each file has one job:
 - `conf/genome_<genome>.config`: reference paths.
 - `conf/params.yaml`: `mode`, `genome`, `outdir`. No `input`.
 
-**oncoanalyser `errorStrategy`:** its tools exit 1 on real failures,
-hence `{ task.exitStatus != 1 ? 'retry' : 'finish' }` with
-`maxRetries = 3`. Check which exit codes a new pipeline's tools use
-before copying this.
+**oncoanalyser `errorStrategy`:**
+`{ task.exitStatus != 1 || task.attempt == 1 ? 'retry' : 'finish' }`
+with `maxRetries = 3`.
+- Its tools exit 1 on real failures, so exit 1 is not retried after
+  the first retry.
+- What went wrong: the first rule never retried exit 1. A Java
+  `OutOfMemoryError` also exits 1, so a heap error stopped the whole
+  run twice (PURPLE, then ESVEE). `finish` stops new submissions, and
+  the other groups waited for a manual resume. Retrying once gives the
+  task `task.attempt` times the memory.
+- Cost: a real tool failure runs twice before the run stops.
+- `finish` lets running tasks complete, and their results are cached
+  for the resume. After the ESVEE stop, two other ESVEE tasks ran on
+  for up to 4 h and finished; in the local test, tasks that finished
+  after a `finish` stop were cached on resume.
+- Check which exit codes a new pipeline's tools use before copying
+  this. A local test (section 5) confirmed the rule: exit 1 is retried
+  once, then the run stops.
+
+**`withName:` selectors:** use the selector from the pipeline's
+`conf/modules.config` (oncoanalyser: `'.*:ESVEE_CALLING:ESVEE'`,
+`'.*:SAGE_CALLING:SAGE_SOMATIC'`). It matches the full name
+`NFCORE_ONCOANALYSER:WGTS:ESVEE_CALLING:ESVEE`. The pipeline sets
+`nextflow.enable.configProcessNamesValidation = false`, so a selector
+that matches nothing gives no warning. Check that a selector matches
+with a value the module prints: the `-log_level DEBUG` from
+`ext.log_level` (same selector) appears in the task's `.command.sh`.
 
 Values that appear in more than one file and must agree:
 - The Singularity cache path: three lines in `conf/ENV.sh` and
@@ -463,8 +577,10 @@ Copy Prism's files into the new repo, then change:
   cache lines.
 - **`conf/iris.config`:** check `errorStrategy` against the new tools'
   exit codes, and `resourceLimits` against the new pipeline's largest
-  process. The queue closure, the `executor` block and the Singularity
-  settings carry over.
+  process. The queue closure, the QOS rule (`clusterOptions`), the
+  `executor` block and the Singularity settings carry over. Drop the
+  oncoanalyser `withName:` blocks (PURPLE, ESVEE, SAGE somatic); size
+  the new pipeline's processes from its first run (section 17).
 - **Run script:** the pipeline name, `-revision`, and the config and
   params files it passes.
 - **Pipeline-specific files to rewrite:** `conf/params.yaml`, the genome
@@ -528,6 +644,16 @@ From oncoanalyser 3.0.0; look up the new pipeline's values.
 
   A direct test run was blocked by the session's permission check, so
   the checks stayed at `bash -n`, `shellcheck -x` and `-h`.
+- **2026-11-16 to 18, first full runs in the Prism layout** (15 WGS
+  groups from FASTQ, 254 lane pairs):
+  - Run 1 stopped after 6 h on a PURPLE heap error (exit 1), which led
+    to the PURPLE `withName:` block. Run 2, a resume, stopped on an
+    ESVEE heap error (exit 1) with 12 of 15 groups finished. Six ESVEE
+    tasks were also killed for memory (exit 137) and retried.
+  - These led to the ESVEE and SAGE somatic blocks, the retry-once
+    rule, the QOS rule and the corrected `resourceLimits` (sections 6,
+    10, 17).
+  - Not yet run: a resume or new run with the 2026-11-18 config.
 - Record results here when these are run.
 
 ## 15. Working with this user
@@ -570,8 +696,9 @@ From oncoanalyser 3.0.0; look up the new pipeline's values.
 6. Add the head temp setup to the run script and `00.SETUP.sh`, and the
    task temp setup (`beforeScript` and the two `-B` mounts) to the
    config (section 2).
-7. Add the queue closure, `resourceLimits` with time `7.d`, and an
-   `errorStrategy` that fits the new tools' exit codes.
+7. Add the queue closure, the QOS rule, `resourceLimits` (allocatable
+   CPUs and memory, time `7.d`; check with `sbatch --test-only`), and an
+   `errorStrategy` that fits the new tools' exit codes (sections 6, 10).
 8. Write the run script as in section 7, with the repo lookup from
    section 6.
 9. Check with `bash -n`, `shellcheck -x`, `nextflow lint` and
@@ -582,3 +709,56 @@ From oncoanalyser 3.0.0; look up the new pipeline's values.
     `/usr/bin/sbatch`, and the first task's `.command.run` (section 2).
 12. Commit in logical groups only when asked. Push only after "Are you
     sure?".
+13. After the first full run, size the heavy processes (section 17).
+
+## 17. Sizing resources from a finished run
+
+From the 2026-11-17 oncoanalyser run. The data are in
+`out/pipeline_info/execution_trace_*.txt` (realtime, `%cpu`, peak_rss,
+submit time), `sacct`, `.nextflow.log` and each task's `.command.log`.
+
+- **Queue waits:** duration minus realtime is the time from submission
+  to start. It was under 2 minutes for every task, so the request
+  sizes did not delay scheduling; the limit on how many tasks ran at
+  once was `executor.queueSize` (then 50). Decision (2026-11-18):
+  `queueSize = 200`. cmobic_cpu fits about 91 12-CPU tasks; the rest
+  wait in SLURM with QOS `priority`. Not yet tested at 200: SLURM
+  limits each user's commands to a burst of 30, then about 2 per
+  second (`SlurmctldParameters` `rl_*`), and alignment will submit up
+  to 200 jobs at the start.
+- **CPUs:** `%cpu / 100 / cpus` near 1 means more CPUs should help.
+  - SAGE somatic: 0.97 of 12 CPUs.
+  - ESVEE: about 0.6 of 12, about 13 cores busy at 24 threads, about
+    17 at 36. Its prep ran 1.4 to 2 times faster with 24 threads than
+    with 12, and no faster with 36 than with 24.
+  - REDUX (0.4) and VIRUSBREAKEND (0.26) use far fewer CPUs than they
+    request. This did not slow the run, so they were left alone.
+- **Memory of Java tools:** the modules set `-Xmx` to 95% of the
+  request. The heap fills up to that, so `MaxRSS` and `peak_rss` show
+  about the request whether or not the task needed it. Look instead at:
+  - exit 1 with `java.lang.OutOfMemoryError` in `.command.err`;
+  - SLURM state `OUT_OF_MEMORY` and exit 137 (`sacct`);
+  - stage timings in `.command.log`. A heap near its limit shows as a
+    sudden slowdown late in a task: ESVEE took 32 to 84 min for a
+    chromosome that took 7 min with enough memory, before failing.
+- **A subprocess shares the job's memory with a full Java heap.**
+  ESVEE sorts its prep BAM with sambamba in the same job. Every kill
+  came at `writing sorted BAM`, after hours of work.
+- **The input that predicts the need may not be depth.** ESVEE memory
+  and run time tracked the number of chimeric reads (`pctChimeras` x
+  total reads in a QC table, tumor plus normal). Groups above about
+  300 M chimeric reads failed on 72 GB; one with 571 M was still
+  killed on 144 GB and passed on 216 GB.
+  Compute such a number before the run to know which groups will be
+  slow.
+- **Which step sets a group's finish:** for each group, compare when
+  the inputs of the step that joins the branches (oncoanalyser:
+  PURPLE) became ready. With ESVEE sized, SAGE somatic is the longest
+  branch for the slowest groups.
+- **The JVM heap can be set from config,** but at a cost. The `esvee`
+  wrapper in its container (`/usr/local/bin/esvee`, read 2026-11-18;
+  other hmftools wrappers not checked) passes every `-Xm*` and `-XX*`
+  argument to the JVM, and the JVM uses the last `-Xmx`. So `ext.args`
+  with `-Xmx...` would override the module's 95%. That changes the
+  task hash (section 9), and it has not been tested. More memory is
+  the tested fix.

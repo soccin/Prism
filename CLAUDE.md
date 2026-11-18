@@ -28,6 +28,7 @@ Run from the project folder (the parent of `Prism/`):
 Rscript Prism/scripts/makeOncoanalyserInput.R mapping.csv manifest.csv oncoanalyser_input.csv
 sbatch ./Prism/runOncoanalyser.sh INPUT.csv [WORK_DIR]  # as a SLURM job
 ./Prism/runOncoanalyser.sh INPUT.csv [WORK_DIR]         # in the current shell
+./Prism/deliverLocal.sh [OUT_DIR] [RESULTS_DIR]         # hard link reports into results/{PDF,HTML,PNG}
 ```
 
 `WORK_DIR` is the Nextflow work folder of an earlier run; pass it to
@@ -37,8 +38,8 @@ samplesheet.
 Checks after a change (there is no test suite):
 
 ```
-bash -n Prism/runOncoanalyser.sh
-shellcheck -x Prism/runOncoanalyser.sh Prism/00.SETUP.sh
+bash -n Prism/runOncoanalyser.sh Prism/deliverLocal.sh
+shellcheck -x Prism/runOncoanalyser.sh Prism/00.SETUP.sh Prism/deliverLocal.sh
 Prism/bin/nextflow lint Prism/conf/iris.config
 Prism/bin/nextflow -c Prism/conf/iris.config config -flat
 ```

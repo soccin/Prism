@@ -460,6 +460,21 @@ must outlive the whole run. If a run needs longer, resubmit with the
 work folder as the second argument so `-resume` reuses completed tasks;
 resubmitting without it starts a new folder and reruns everything.
 
+To collect the reports for delivery, run from the project directory:
+
+```bash
+./Prism/deliverLocal.sh [OUT_DIR] [RESULTS_DIR]
+```
+
+It hard links each group's ORANGE PDF (`orange/*.orange.pdf`), LINX
+HTML report (`linx/*_linx.html`), PURPLE circos plot
+(`purple/plot/*.circos.png`) and CUPPA plot (`cuppa/*.cuppa.vis.png`,
+tumor/normal groups only) from `OUT_DIR` (default `out`) into
+`RESULTS_DIR/PDF`, `RESULTS_DIR/HTML` and `RESULTS_DIR/PNG` (default
+`results`). Hard links take no extra space but need both folders on
+the same file system. Rerunning skips links already in place and
+reports, without replacing, a different file under an existing name.
+
 ## 8. Optional controls
 
 - Skip tools: `--processes_exclude virusinterpreter,orange`

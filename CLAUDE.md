@@ -46,7 +46,15 @@ Prism/bin/nextflow -c Prism/conf/iris.config config -flat
 `-c` goes before `config`. In the `config -flat` output,
 `beforeScript` and `singularity.runOptions` must show `$SLURM_JOB_ID`
 literally. `shellcheck` reports SC1091 for `source "$PDIR/conf/ENV.sh"`;
-that is expected.
+that is expected. `lint` and `config` write `.nextflow.log` in the
+current folder, which rotates a run's log there (`.nextflow.log` becomes
+`.nextflow.log.1`). Add `-log <file>` before the command (for example
+`Prism/bin/nextflow -log /localscratch/soccin/<task>/lint.log lint ...`)
+to keep the run logs in place.
+
+To check a resource request against partition and QOS limits without
+submitting anything: `/usr/bin/sbatch --test-only -p <partitions>
+--qos=<qos> -c <cpus> --mem=<MB>M -t <time> --wrap=true`.
 
 Do not start a pipeline run or submit a job unless the user asks.
 
@@ -89,6 +97,9 @@ Values that must stay in agreement across files:
   (`beforeScript` and `runOptions`).
 - The pipeline version 3.0.0 is in `-revision` in `runOncoanalyser.sh`
   and in the reference path in `conf/genome_GRCh38_hmf.config`.
+- In `conf/iris.config`, `clusterOptions` (QOS) depends on the `queue`
+  rule: it drops `--qos=priority` when the queue includes `cpushort`.
+  Change them together.
 - When a script, config or path changes, update `README.md` and
   `docs/oncoanalyser_3.0.0_WGS_instructions.md` to match.
 
@@ -127,9 +138,22 @@ read group IDs from sample, library, lane and flowcell.
   and are ignored by git.
 - Do not add `cd "$SLURM_SUBMIT_DIR"` and do not pass `--export=` with
   a value other than `ALL`.
-- `errorStrategy` retries every exit code except 1, because the WiGiTS
-  tools exit 1 on real failures. Check a new pipeline's exit codes
+- `errorStrategy` retries every failure once; after that it retries
+  every exit code except 1, because the WiGiTS tools exit 1 on real
+  failures. Java `OutOfMemoryError` also exits 1, hence the one retry
+  (memory grows with `task.attempt`). Check a new pipeline's exit codes
   before reusing this.
+- Tasks on `cmobic_cpu` and `cmobic_short` run with QOS `priority`.
+  `cpushort` allows only `normal`, and SLURM has
+  `EnforcePartLimits=ALL`: a job listed for several partitions must be
+  valid in each one. `resourceLimits` (52 CPUs, 975 GB) follows from the
+  same rule; see `docs/NF_SCRIPTING_INFO.md` section 6.
+- Before resuming a run, change only process directives (`cpus`,
+  `memory`, `time`, `queue`, `clusterOptions`, `errorStrategy`); they
+  are not part of the task hash. `ext.*` values that a module script
+  uses are, so changing them reruns that process and everything after
+  it. `-resume` restarts `task.attempt` at 1, so a task that needed a
+  retry for memory needs a larger starting value.
 - The pipeline name is spelled "oncoanalyser". All other text uses US
   spelling.
 - The repo layout follows https://github.com/soccin/adagio: `00.SETUP.sh`,

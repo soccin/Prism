@@ -3,7 +3,7 @@
 # cohortReport.sh; see that script for the usage and the output layout.
 #
 #   Rscript cohortReport.R --out-dir OUT --res-dir RES [--manifest CSV]
-#       [--genes TXT] [--panel TSV] [--version STR] [--min-pct FRAC]
+#       [--genes TXT] [--panel TSV] [--version STR]
 #
 # Reads the per-sample result tables under OUT and writes RES/prism_report.xlsx
 # plus one CSV per table in RES/data. The report counts and lists events; it
@@ -13,10 +13,6 @@
 #   the genes with a pipeline driver call of likelihood 0.8 or higher in at
 #   least one sample, and that list is written to
 #   RES/genes_of_interest_default.txt.
-# --min-pct: the gene tables in the workbook keep a gene altered in at least
-#   max(2, FRAC x samples) samples (default 0.05).
-# gene_summary_HC is counted without the breakends at a breakpoint that
-# more than one sample has.
 
 suppressPackageStartupMessages({
   library(tidyverse)
@@ -43,7 +39,7 @@ DEFAULT_GOI_MIN_LIKELIHOOD <- 0.8
 parse_args <- function(args) {
   opts <- list(
     out_dir = NULL, res_dir = NULL, manifest = NULL, genes = NULL,
-    panel = NULL, version = "unknown", min_pct = "0.05"
+    panel = NULL, version = "unknown"
   )
   i <- 1
   while (i <= length(args)) {
@@ -56,10 +52,6 @@ parse_args <- function(args) {
   }
   if (is.null(opts$out_dir) || is.null(opts$res_dir)) {
     stop("--out-dir and --res-dir are required", call. = FALSE)
-  }
-  opts$min_pct <- suppressWarnings(as.numeric(opts$min_pct))
-  if (is.na(opts$min_pct) || opts$min_pct < 0 || opts$min_pct > 1) {
-    stop("--min-pct must be a number from 0 to 1", call. = FALSE)
   }
   opts
 }
@@ -141,10 +133,6 @@ pct <- function(n, total) {
 collapse_unique <- function(x, sep = ";") {
   x <- sort(unique(x[!is.na(x) & x != ""]))
   if (length(x) == 0) NA_character_ else str_c(x, collapse = sep)
-}
-
-safe_name <- function(x) {
-  str_replace_all(x, "[^A-Za-z0-9]+", "_")
 }
 
 # ---- samples -----------------------------------------------------------
@@ -257,7 +245,7 @@ panel <- tibble(gene = character(), panel_role = character())
 if (!is.null(opts$panel) && file_exists(opts$panel)) {
   panel <- read_chr(opts$panel) |> transmute(gene, panel_role = likelihoodType)
 } else {
-  log_msg("No driver gene panel; in_panel and panel_role are left empty")
+  log_msg("No driver gene panel; panel_role is left empty")
 }
 
 # Without a gene list the genes of interest are set from the pipeline's
@@ -844,181 +832,6 @@ cohort_summary <- summary_full |>
   select(metric, group, value) |>
   pivot_wider(names_from = group, values_from = value)
 
-# ---- gene summary ------------------------------------------------------
-
-log_msg("gene summary")
-EVENTS <- c(
-  "any", "mutation", "truncating", "hotspot", "amp", "deep_del",
-  "disruption", "disruption_incl_weak", "fusion", "fusion_incl_unreported",
-  "loh", "biallelic", "pipeline_driver"
-)
-ANY_EVENTS <- c("mutation", "amp", "deep_del", "disruption", "fusion")
-
-ev <- function(df, event) {
-  df |> distinct(sample_name, gene) |> mutate(event = event)
-}
-disruptive <- disruptions |> filter(disruptive)
-fusion_genes <- bind_rows(
-  fusions |> select(sample_name, gene = gene_5p, pipeline_reported),
-  fusions |> select(sample_name, gene = gene_3p, pipeline_reported)
-) |>
-  filter(!is.na(gene))
-
-# The events per sample and gene. disruptive_df: the disruptive breakends
-# that count toward the disruption events.
-make_events <- function(disruptive_df) {
-  events <- bind_rows(
-    ev(variants, "mutation"),
-    ev(variants |> filter(mutation_class == "truncating"), "truncating"),
-    ev(variants |> filter(hotspot), "hotspot"),
-    ev(gene_cn_events |> filter(cn_event == "AMP"), "amp"),
-    ev(gene_cn_events |> filter(cn_event == "DEEP_DEL"), "deep_del"),
-    ev(gene_cn_events |> filter(loh), "loh"),
-    ev(disruptive_df |> filter(!weak_support), "disruption"),
-    ev(disruptive_df, "disruption_incl_weak"),
-    ev(fusion_genes |> filter(pipeline_reported), "fusion"),
-    ev(fusion_genes, "fusion_incl_unreported"),
-    ev(drivers, "pipeline_driver"),
-    ev(gene_cn_events |> filter(cn_event == "DEEP_DEL"), "biallelic"),
-    ev(variants |> filter(biallelic), "biallelic"),
-    ev(disruptive_df |> filter(!weak_support, undisrupted_copy_number < 0.5), "biallelic")
-  ) |>
-    distinct()
-  bind_rows(
-    events,
-    events |>
-      filter(event %in% ANY_EVENTS) |>
-      distinct(sample_name, gene) |>
-      mutate(event = "any")
-  ) |>
-    mutate(event = factor(event, levels = EVENTS)) |>
-    left_join(sample_key, by = "sample_name")
-}
-
-# All events, and the high-confidence set: a breakend at a breakpoint
-# shared with another sample does not count toward a disruption there.
-events <- make_events(disruptive)
-events_hc <- make_events(disruptive |> filter(!same_bp_flag))
-
-count_wide <- function(df, ...) {
-  df |>
-    count(..., event, .drop = FALSE) |>
-    pivot_wider(
-      names_from = event, values_from = n, names_prefix = "n_",
-      values_fill = 0L, names_expand = TRUE
-    )
-}
-
-# N: the samples a gene could be counted in. For X/Y genes that is only
-# the samples whose X/Y events are reported.
-n_all <- nrow(samples)
-n_xy <- sum(samples$xy_reported)
-class_n <- samples |>
-  summarize(N_auto = n(), N_xy = sum(xy_reported), .by = sample_class)
-
-gene_annot <- gene_info |>
-  left_join(panel, by = "gene") |>
-  transmute(
-    gene, gene_of_interest = gene %in% genes_of_interest,
-    in_panel = !is.na(panel_role), panel_role, chromosome, band,
-    gene_length_kb, is_xy
-  )
-
-# Breakends and breakpoints per gene, over all disruptive breakends. A
-# breakpoint is a chromosome, position and orientation; it is shared when
-# more than one sample has it, private otherwise.
-gene_breakends <- disruptive |>
-  summarize(
-    n_breakends = sum(!weak_support),
-    n_breakends_incl_weak = n(),
-    n_breakends_same_bp = sum(same_bp_flag),
-    n_bp_distinct = n_distinct(breakpoint),
-    n_bp_shared = n_distinct(breakpoint[same_bp_flag]),
-    n_bp_private = n_distinct(breakpoint[!same_bp_flag]),
-    .by = gene
-  )
-
-make_gene_summary <- function(events) {
-  per_class_any <- events |>
-    filter(event == "any") |>
-    count(gene, sample_class) |>
-    mutate(sample_class = str_c("n_any_", safe_name(sample_class))) |>
-    pivot_wider(names_from = sample_class, values_from = n, values_fill = 0L)
-  for (cl in str_c("n_any_", safe_name(classes))) {
-    if (!cl %in% names(per_class_any)) {
-      per_class_any[[cl]] <- 0L
-    }
-  }
-
-  count_wide(events, gene) |>
-    mutate(gene = as.character(gene)) |>
-    left_join(per_class_any, by = "gene") |>
-    left_join(
-      events |>
-        filter(event == "any", matched_normal) |>
-        count(gene, name = "n_any_matched_normal"),
-      by = "gene"
-    ) |>
-    left_join(
-      events |>
-        filter(event == "any") |>
-        summarize(samples_any = collapse_unique(sample_name), .by = gene),
-      by = "gene"
-    ) |>
-    left_join(gene_breakends, by = "gene") |>
-    left_join(gene_annot, by = "gene") |>
-    mutate(
-      across(starts_with("n_"), \(x) replace_na(x, 0L)),
-      N = if_else(coalesce(is_xy, FALSE), n_xy, n_all),
-      pct_any = pct(n_any, N)
-    ) |>
-    arrange(desc(n_any), desc(n_disruption), desc(n_mutation), gene) |>
-    select(
-      gene, gene_of_interest, in_panel, panel_role, chromosome, band,
-      gene_length_kb, n_any, N, pct_any, starts_with("n_any_"),
-      n_mutation, n_truncating, n_hotspot, n_amp, n_deep_del, n_disruption,
-      n_disruption_incl_weak, n_fusion, n_fusion_incl_unreported, n_loh,
-      n_biallelic, n_pipeline_driver, n_breakends, n_breakends_incl_weak,
-      n_breakends_same_bp, n_bp_distinct, n_bp_shared, n_bp_private,
-      samples_any
-    )
-}
-
-# The workbook keeps a gene altered (n_any) in at least max(2, min_pct x
-# samples) samples; gene_summary_all (CSV only) keeps every gene.
-# gene_summary_HC is counted again from events_hc, so its n_disruption,
-# n_disruption_incl_weak, n_biallelic and n_any leave out the breakends
-# at shared breakpoints. The breakend and breakpoint columns are the same
-# in all gene tables.
-min_samples <- max(2, opts$min_pct * n_all)
-gene_summary_all <- make_gene_summary(events)
-gene_summary_unfilt <- gene_summary_all |>
-  filter(n_any >= min_samples)
-gene_summary_hc <- make_gene_summary(events_hc) |>
-  filter(n_any >= min_samples)
-log_msg(
-  "gene tables: {nrow(gene_summary_all)} genes, {nrow(gene_summary_unfilt)} ",
-  "in at least {min_samples} samples, {nrow(gene_summary_hc)} in gene_summary_HC"
-)
-
-gene_summary_by_class <- count_wide(events, gene, sample_class) |>
-  mutate(gene = as.character(gene)) |>
-  filter(if_any(starts_with("n_"), \(x) x > 0)) |>
-  semi_join(gene_summary_unfilt, by = "gene") |>
-  left_join(gene_annot, by = "gene") |>
-  left_join(class_n, by = "sample_class") |>
-  mutate(
-    N = if_else(coalesce(is_xy, FALSE), N_xy, N_auto),
-    pct_any = pct(n_any, N)
-  ) |>
-  arrange(desc(n_any), gene, sample_class) |>
-  select(
-    gene, sample_class, gene_of_interest, in_panel, panel_role,
-    gene_length_kb, n_any, N, pct_any, n_mutation, n_truncating, n_hotspot,
-    n_amp, n_deep_del, n_disruption, n_disruption_incl_weak, n_fusion,
-    n_fusion_incl_unreported, n_loh, n_biallelic, n_pipeline_driver
-  )
-
 # ---- chromosome arms ---------------------------------------------------
 
 arms <- read_per_sample(samples, "arm_file")
@@ -1038,59 +851,6 @@ if (nrow(arms) > 0) {
 }
 
 # ---- genes of interest -------------------------------------------------
-
-goi <- NULL
-if (length(genes_of_interest) > 0) {
-  goi <- expand_grid(gene = genes_of_interest, sample_name = samples$sample_name) |>
-    left_join(gene_annot |> select(gene, chromosome, is_xy), by = "gene") |>
-    left_join(
-      variants |>
-        summarize(
-          mutations = str_c(
-            if_else(hgvs_protein == "" | is.na(hgvs_protein), hgvs_coding, hgvs_protein),
-            collapse = "; "
-          ),
-          .by = c(sample_name, gene)
-        ),
-      by = c("sample_name", "gene")
-    ) |>
-    left_join(
-      gene_cn |> select(
-        sample_name, gene, cn_event, loh, min_copy_number,
-        min_minor_allele_copy_number, sample_ploidy
-      ),
-      by = c("sample_name", "gene")
-    ) |>
-    left_join(
-      disruptive |>
-        summarize(
-          breakends = sum(!weak_support), breakends_weak = sum(weak_support),
-          .by = c(sample_name, gene)
-        ),
-      by = c("sample_name", "gene")
-    ) |>
-    left_join(
-      bind_rows(
-        fusions |> select(sample_name, gene = gene_5p, fusion),
-        fusions |> select(sample_name, gene = gene_3p, fusion)
-      ) |>
-        summarize(fusions = collapse_unique(fusion, "; "), .by = c(sample_name, gene)),
-      by = c("sample_name", "gene")
-    ) |>
-    left_join(
-      drivers |>
-        summarize(pipeline_driver = collapse_unique(driver, "; "), .by = c(sample_name, gene)),
-      by = c("sample_name", "gene")
-    ) |>
-    mutate(
-      breakends = replace_na(breakends, 0L),
-      breakends_weak = replace_na(breakends_weak, 0L),
-      note = if_else(
-        is_xy & !(sample_name %in% xy_ok_samples), "X/Y not reported", NA_character_
-      )
-    ) |>
-    select(-is_xy)
-}
 
 # Every event in a gene of interest, one row per event. Each kind of event
 # is written into the same columns: what it is (event), where (location),
@@ -1136,8 +896,8 @@ if (length(genes_of_interest) > 0) {
 
   # Copy number events. The location is the span of the gene. A partial
   # amplification (the highest copy number of the gene passes the
-  # amplification threshold, the lowest does not) is listed here only; the
-  # gene tables do not count it.
+  # amplification threshold, the lowest does not) is listed here only;
+  # gene_cn has no row for it.
   goi_cn <- gene_cn |>
     filter(gene %in% genes_of_interest) |>
     mutate(
@@ -1378,27 +1138,13 @@ manifest_text <- tribble(
     "amplification, deep deletion, LOH, disruptive breakend and predicted ",
     "fusion, with what it is, where it is, the evidence for it and whether ",
     "the pipeline reports it. The genes of interest are {goi_txt}. A gene ",
-    "with no event has no row here; genes_of_interest has every gene in ",
-    "every sample. Partial amplifications are listed in this sheet only and ",
-    "are not counted in the gene tables."
+    "and sample with no event has no row. Partial amplifications are listed ",
+    "in this sheet only; gene_cn has no row for them."
   ),
-  "genes_of_interest", "a gene of interest in a sample",
-  "For each gene of interest, its status in every sample, including the samples with no event: mutations, copy number, LOH, breakends, fusions and pipeline driver calls. The manifest row of genes_of_interest_events says which genes these are.",
   "samples", "a tumor sample",
   "The sample's class and whether it has a matched normal, then its genome-wide results: purity and ploidy, whole genome duplication, microsatellite status, mutational burden, homologous recombination status, viruses, DPYD status, quality checks, and its number of structural variants and coding variants.",
   "cohort_summary", "a yes/no measure",
   "How many samples have each sample-level feature (whole genome duplication, MSI, high mutational burden, EBV, DPYD status and others), for all samples and for each sample class. Each cell reads 'n of N (pct%)'.",
-  "gene_summary_HC", "a gene",
-  g(
-    "The main gene table. For each gene, the number of samples with each kind ",
-    "of event (mutation, amplification, deep deletion, disruption, fusion, ",
-    "LOH), ranked by the number of samples with any event (n_any). Only genes ",
-    "with n_any of at least {min_samples} are listed: max(2, {opts$min_pct} x ",
-    "{n_all} samples). HC (high confidence): a breakend at a breakpoint that ",
-    "another sample also has does not count toward a disruption. A deep ",
-    "deletion that the copy number caller derives from such a breakend is ",
-    "still counted."
-  ),
   "somatic_variants", "a somatic variant in a sample",
   "Every somatic point mutation and small indel that passes the pipeline's filters and changes the protein of the gene's main transcript (missense, inframe, nonsense, frameshift, splice), with its position, protein change, read support and copy number context. In a sample without a matched normal, some of these can be germline variants that the filters did not remove.",
   "disruptions", "a structural variant breakend inside a gene, in a sample",
@@ -1421,21 +1167,12 @@ manifest_text <- tribble(
   "The pipeline's own list of driver events (mutation, amplification, deletion, disruption) in the genes of its driver panel, each with the pipeline's estimate of the likelihood that the event is a driver.",
   "arm_cn", "a chromosome arm",
   "Copy number of each chromosome arm in each sample, relative to the sample's ploidy: the median copy number of the arm minus the ploidy. Positive values are gains, negative values are losses. One column per sample.",
-  "gene_summary_by_class", "a gene in a sample class",
-  "The gene counts within each sample class, for the genes of gene_summary_UnFilt. Breakends at shared breakpoints are counted here.",
   "qc", "a quality warning for a sample",
   "The quality measures that the pipeline's QC tool flags as WARN or FAIL, for the tumor or its normal, with the value and the condition that set the flag. Measures that pass are not listed.",
   "signatures", "a mutational signature in a sample",
   "The number and percent of each sample's somatic variants assigned to each mutational signature. Only samples with a matched normal have this result.",
   "hla", "an HLA allele in a sample",
   "The HLA class I and class II alleles of each sample, with read support, the copy number of the allele in the tumor and the number of somatic variants in it.",
-  "gene_summary_UnFilt", "a gene",
-  g(
-    "The same table as gene_summary_HC, but every breakend counts toward a ",
-    "disruption, including those at a breakpoint shared with another sample. ",
-    "For comparison with gene_summary_HC. data/gene_summary_all.csv has these ",
-    "counts for all {nrow(gene_summary_all)} genes with any event or LOH."
-  ),
   "summary_full", "a measure in a group of samples",
   "The counts of cohort_summary as numbers, also for the samples with and without a matched normal, and the median, minimum and maximum of the numeric measures (purity, ploidy, mutational burden, number of structural variants, number of coding variants).",
   "glossary", "a column",
@@ -1499,55 +1236,23 @@ glossary_text <- tribble(
   "location", "Where the event is (GRCh38). Mutation: position and alleles. Copy number events: the span of the gene. Disruption and fusion: the breakpoint in this gene as chromosome:position:orientation (see breakpoint), then the other end of the structural variant or fusion.",
   "support", "The evidence for the event, as text. Mutation: allele fraction (VAF), reads with the variant out of all reads, copy number. Copy number events: the gene's other copy number value, the sample's ploidy, what marks the ends of the segment with the lowest copy number and its number of read depth windows. Disruption: supporting fragments, allele fraction (AF), copy number of the junction, copies of the gene left intact. Fusion: supporting fragments at each end.",
   "caution", "Reasons to treat a breakend or fusion with caution: 'weak support' (see weak_support) and 'shared breakpoint' with the number of samples that have it (see same_bp_flag). Empty if neither applies, and for mutations and copy number events.",
-  # genes of interest: status per sample
-  "mutations", "The protein changes (or coding changes) of the gene's rows in somatic_variants for the sample. Empty if none.",
-  "breakends", "Number of disruptive breakends in the gene in the sample, without weak support.",
-  "breakends_weak", "Number of disruptive breakends in the gene in the sample with weak support.",
-  "fusions", "The predicted fusions involving the gene in the sample, reported or not. Empty if none.",
-  "pipeline_driver", "The kinds of driver event the pipeline lists for the gene in the sample. Empty if none.",
-  "note", "'X/Y not reported' if the gene is on chrX or chrY and the sample's X/Y events are left out.",
   # summaries
   "metric", "The measure the row is about. In qc: the name of the quality measure.",
   "all samples", "The count over all samples, as 'n of N (pct%)'.",
   "<sample_class>", "One column per sample class: the count within that class, as 'n of N (pct%)'.",
   "sample_group", "The set of samples the row counts: all samples, one sample class, or the samples with or without a matched normal.",
   "n", "Number of samples with the feature.",
-  "N", "Number of samples the feature could be counted in. In the gene tables this is all samples of the cohort or class; for genes on chrX and chrY, only the samples with xy_reported.",
+  "N", "Number of samples the feature could be counted in.",
   "pct", "100 x n / N.",
   "median", "Median of a numeric measure over the samples of the group.",
   "min", "Lowest value of a numeric measure over the samples of the group.",
   "max", "Highest value of a numeric measure over the samples of the group.",
   # genes
   "gene", "Gene symbol.",
-  "gene_of_interest", "TRUE if the gene is a gene of interest: on the gene list given to the report or, when none is given, on the default list (see genes_of_interest_events in the manifest).",
-  "in_panel", "TRUE if the gene is in the pipeline's driver gene panel (Hartwig).",
   "panel_role", "Role the driver panel gives the gene: ONCO (oncogene) or TSG (tumor suppressor). The pipeline scores a gene with the model for its role, so an activating mutation in a gene classed as TSG gets a low driver likelihood.",
   "chromosome", "Chromosome of the gene or variant.",
   "band", "Chromosome band of the gene.",
   "gene_length_kb", "Length of the gene in kilobases. Given because a longer gene can collect more breakends.",
-  "n_any", "Number of samples with at least one of: mutation, amplification, deep deletion, disruption (n_disruption), pipeline-reported fusion (n_fusion). LOH does not count toward n_any.",
-  "pct_any", "100 x n_any / N.",
-  "n_any_<sample_class>", "One column per sample class: n_any within that class.",
-  "n_any_matched_normal", "n_any among the samples with a matched normal.",
-  "n_mutation", "Number of samples with a row for the gene in somatic_variants.",
-  "n_truncating", "Number of samples with a nonsense or frameshift mutation in the gene.",
-  "n_hotspot", "Number of samples with a mutation at a known cancer hotspot in the gene.",
-  "n_amp", "Number of samples with an amplification of the gene (see cn_event).",
-  "n_deep_del", "Number of samples with a deep deletion of the gene (see cn_event).",
-  "n_disruption", "Number of samples with a disruptive breakend in the gene that does not have weak support. In gene_summary_HC a breakend at a shared breakpoint (same_bp_flag) does not count.",
-  "n_disruption_incl_weak", "As n_disruption, but breakends with weak support also count.",
-  "n_fusion", "Number of samples with a pipeline-reported fusion involving the gene.",
-  "n_fusion_incl_unreported", "Number of samples with any predicted fusion involving the gene, reported or not.",
-  "n_loh", "Number of samples with loss of heterozygosity of the gene (see loh).",
-  "n_biallelic", "Number of samples where both copies of the gene are hit: a deep deletion, a mutation PURPLE calls biallelic, or a disruption that leaves under 0.5 undisrupted copies.",
-  "n_pipeline_driver", "Number of samples where the pipeline's driver list (drivers sheet) has the gene.",
-  "n_breakends", "Number of disruptive breakend rows in the gene without weak support, over all samples. One row per sample and breakend, so a breakpoint found in 6 samples gives 6.",
-  "n_breakends_incl_weak", "Number of all disruptive breakend rows in the gene, over all samples.",
-  "n_breakends_same_bp", "Number of the gene's breakend rows that are at a shared breakpoint (same_bp_flag).",
-  "n_bp_distinct", "Number of different breakpoints in the gene over the cohort. A breakpoint is a chromosome, position and orientation; the same breakpoint in several samples counts once.",
-  "n_bp_shared", "Number of the gene's different breakpoints that are found in more than one sample.",
-  "n_bp_private", "Number of the gene's different breakpoints that are found in one sample only.",
-  "samples_any", "The samples counted in n_any.",
   # somatic variants
   "position", "Position of the variant on the chromosome (GRCh38).",
   "ref", "Reference allele.",
@@ -1708,7 +1413,6 @@ glossary_key <- function(sheet, column) {
   case_when(
     sheet == "arm_cn" & column != "arm" ~ "<sample name>",
     sheet == "cohort_summary" & !column %in% c("metric", "all samples") ~ "<sample_class>",
-    str_detect(column, "^n_any_") & column != "n_any_matched_normal" ~ "n_any_<sample_class>",
     sheet == "samples" & column %in% setdiff(manifest_cols, "sex") ~ "<manifest column>",
     .default = column
   )
@@ -1760,19 +1464,15 @@ make_glossary <- function(sheets) {
 # ---- write -------------------------------------------------------------
 
 log_msg("writing")
-in_gene_set <- gene_annot |>
-  filter(in_panel | gene_of_interest) |>
-  pull(gene)
+in_gene_set <- union(panel$gene, genes_of_interest)
 
 # Sheet order: the genes of interest, the tables a reader can use
-# directly, the supporting tables, the full tables, then the manifest and
-# the glossary.
+# directly, the supporting tables, the full summary, then the manifest
+# and the glossary.
 sheets <- list(
   genes_of_interest_events = if (is.null(goi_events)) NULL else add_class(goi_events),
-  genes_of_interest = if (is.null(goi)) NULL else add_class(goi),
   samples = samples_sheet,
   cohort_summary = cohort_summary,
-  gene_summary_HC = gene_summary_hc,
   somatic_variants = variants |> add_class() |> arrange(gene, sample_name),
   disruptions = disruptions |> add_class(),
   gene_cn = gene_cn_events |>
@@ -1782,11 +1482,9 @@ sheets <- list(
   viruses = viruses |> add_class(),
   drivers = drivers |> add_class() |> arrange(gene, sample_name),
   arm_cn = arms,
-  gene_summary_by_class = gene_summary_by_class,
   qc = if (nrow(qc) > 0) add_class(qc) else qc,
   signatures = if (nrow(signatures) > 0) add_class(signatures) else signatures,
   hla = if (nrow(hla) > 0) add_class(hla) else hla,
-  gene_summary_UnFilt = gene_summary_unfilt,
   summary_full = summary_full |> rename(sample_group = group)
 ) |>
   compact()
@@ -1818,7 +1516,6 @@ sheets <- c(sheets, list(manifest = manifest, glossary = glossary))
 
 csv_tables <- c(sheets, review_sheets)
 csv_tables$gene_cn <- gene_cn_events |> add_class()
-csv_tables$gene_summary_all <- gene_summary_all
 iwalk(csv_tables, \(df, name) {
   write_csv(df, path(data_dir, str_c(name, ".csv")), na = "")
 })

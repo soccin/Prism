@@ -14,8 +14,8 @@
 # It counts and lists; it applies no significance test and leaves no
 # sample out. Run it from the project directory, as a job or on a
 # compute node:
-#   sbatch ./Prism/cohortReport.sh [-m MANIFEST] [-g GENES] [-p FRAC] [OUT_DIR]
-#   ./Prism/cohortReport.sh [-m MANIFEST] [-g GENES] [-p FRAC] [OUT_DIR]
+#   sbatch ./Prism/cohortReport.sh [-m MANIFEST] [-g GENES] [OUT_DIR]
+#   ./Prism/cohortReport.sh [-m MANIFEST] [-g GENES] [OUT_DIR]
 # OUT_DIR defaults to out. ROOT is the folder that holds OUT_DIR; the
 # report goes to ROOT/res/prism/cohort:
 #   prism_report.xlsx   one sheet per table, the genes of interest
@@ -26,12 +26,7 @@
 #                       than one sample, for review
 #   genes_of_interest_default.txt
 #                       the default genes of interest (only without -g)
-#   data/<table>.csv    the same tables as CSV, and gene_summary_all.csv
-#                       with every gene
-# The gene tables in the workbook keep a gene altered in at least
-# max(2, FRAC x samples) samples (-p, default 0.05). gene_summary_HC
-# is counted without the breakends at a breakpoint that more than one
-# sample has; gene_summary_UnFilt counts every breakend.
+#   data/<table>.csv    the same tables as CSV
 # Logs go to OUT_DIR/logs/other, with the pipeline's own:
 #   cohortReport.<jobid>.out   this job's SLURM log, moved there at the
 #                              end of the job (sbatch only)
@@ -41,9 +36,8 @@
 # on chrX and chrY are reported only for samples with a value in a
 # manifest column named sex and a matched normal.
 # GENES is a text file with one gene symbol per line (# starts a
-# comment): the genes of interest. They are marked in the gene tables and
-# get the first two sheets: genes_of_interest_events (every event, one
-# row per event) and genes_of_interest (every gene in every sample).
+# comment): the genes of interest. They get the first sheet,
+# genes_of_interest_events: every event in them, one row per event.
 # Without -g the genes of interest are the genes with a pipeline driver
 # call of likelihood 0.8 or higher in at least one sample; that list is
 # written to genes_of_interest_default.txt, to be edited and given back
@@ -56,8 +50,8 @@ set -o pipefail
 
 usage() {
     cat <<EOF
-Usage: sbatch ./Prism/cohortReport.sh [-m MANIFEST] [-g GENES] [-p FRAC] [OUT_DIR]
-       ./Prism/cohortReport.sh [-m MANIFEST] [-g GENES] [-p FRAC] [OUT_DIR]
+Usage: sbatch ./Prism/cohortReport.sh [-m MANIFEST] [-g GENES] [OUT_DIR]
+       ./Prism/cohortReport.sh [-m MANIFEST] [-g GENES] [OUT_DIR]
 
 Write the cohort report of an oncoanalyser output folder to
 ROOT/res/prism/cohort (prism_report.xlsx, prism_sv_same_breakpoint.xlsx
@@ -68,8 +62,6 @@ from the project directory; run it directly only on a compute node.
   -g GENES     text file, one gene of interest per line (default: the
                genes with a pipeline driver call of likelihood 0.8 or
                higher; written to genes_of_interest_default.txt)
-  -p FRAC      gene tables keep a gene altered in at least
-               max(2, FRAC x samples) samples (default: 0.05)
   OUT_DIR      oncoanalyser output folder (default: out)
   -h           show this help
 EOF
@@ -77,12 +69,10 @@ EOF
 
 MANIFEST=""
 GENES=""
-MIN_PCT=""
-while getopts ":m:g:p:h" opt; do
+while getopts ":m:g:h" opt; do
     case $opt in
         m) MANIFEST=$OPTARG ;;
         g) GENES=$OPTARG ;;
-        p) MIN_PCT=$OPTARG ;;
         h) usage; exit 0 ;;
         *) usage >&2; exit 1 ;;
     esac
@@ -119,9 +109,6 @@ if [ -n "$GENES" ]; then
         exit 1
     fi
     R_ARGS+=(--genes "$(readlink -f "$GENES")")
-fi
-if [ -n "$MIN_PCT" ]; then
-    R_ARGS+=(--min-pct "$MIN_PCT")
 fi
 
 # Find the Prism folder (PDIR), as in runOncoanalyser.sh: sbatch runs a

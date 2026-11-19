@@ -466,8 +466,8 @@ To collect the reports for delivery, run from the project directory:
 ./Prism/deliverLocal.sh [OUT_DIR] [RESULTS_DIR]
 ```
 
-It hard links each group's ORANGE PDF (`orange/*.orange.pdf`), LINX
-HTML report (`linx/*_linx.html`), PURPLE circos plot
+It hard links each group's ORANGE PDF (`orange/*.orange.pdf`), QSEE
+QC PDF (`qsee/*.qsee.vis.report.pdf`), LINX HTML report (`linx/*_linx.html`), PURPLE circos plot
 (`purple/plot/*.circos.png`) and CUPPA plot (`cuppa/*.cuppa.vis.png`,
 tumor/normal groups only) from `OUT_DIR` (default `out`) into
 `RESULTS_DIR/PDF`, `RESULTS_DIR/HTML` and `RESULTS_DIR/PNG` (default

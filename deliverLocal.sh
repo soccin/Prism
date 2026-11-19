@@ -7,9 +7,11 @@
 # OUT_DIR defaults to out (outdir in conf/params.yaml), RESULTS_DIR to
 # results. From each group folder in OUT_DIR it takes:
 #   PDF/   orange/<sample>.orange.pdf        ORANGE report
+#   PDF/   qsee/<sample>.qsee.vis.report.pdf QSEE QC report
 #   HTML/  linx/<sample>_linx.html           LINX SV report (self-contained)
 #   PNG/   purple/plot/<sample>.circos.png   PURPLE circos plot
 #   PNG/   cuppa/<sample>.cuppa.vis.png      CUPPA plot (tumor/normal only)
+#   PNG/   qsee/<sample>.qsee.vis.report.png QSEE QC report
 # File names start with the sample ID, so each type folder is flat.
 # Files are hard links, not copies: they take no extra space, but both
 # folders must be on the same file system, and a file edited in one
@@ -24,10 +26,10 @@ usage() {
     cat <<EOF
 Usage: ./Prism/deliverLocal.sh [OUT_DIR] [RESULTS_DIR]
 
-Hard link the ORANGE PDFs, LINX HTML reports, PURPLE circos plots and
-CUPPA plots from an oncoanalyser output folder into RESULTS_DIR/PDF,
-RESULTS_DIR/HTML and RESULTS_DIR/PNG. Start it from the project
-directory.
+Hard link the ORANGE PDFs, QSEE reports (PDF and PNG), LINX HTML
+reports, PURPLE circos plots and CUPPA plots from an oncoanalyser
+output folder into RESULTS_DIR/PDF, RESULTS_DIR/HTML and
+RESULTS_DIR/PNG. Start it from the project directory.
 
   OUT_DIR      oncoanalyser output folder (default: out)
   RESULTS_DIR  delivery folder, created if missing (default: results)
@@ -93,9 +95,11 @@ link_files() {
 }
 
 link_files PDF  "ORANGE report"      "$OUT_DIR"/*/orange/*.orange.pdf
+link_files PDF  "QSEE QC report"     "$OUT_DIR"/*/qsee/*.qsee.vis.report.pdf
 link_files HTML "LINX report"        "$OUT_DIR"/*/linx/*_linx.html
 link_files PNG  "PURPLE circos plot" "$OUT_DIR"/*/purple/plot/*.circos.png
 link_files PNG  "CUPPA plot"         "$OUT_DIR"/*/cuppa/*.cuppa.vis.png
+link_files PNG  "QSEE QC report"     "$OUT_DIR"/*/qsee/*.qsee.vis.report.png
 
 echo "Results in $RESULTS_DIR"
 exit $STATUS

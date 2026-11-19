@@ -466,14 +466,56 @@ To collect the reports for delivery, run from the project directory:
 ./Prism/deliverLocal.sh [OUT_DIR] [RESULTS_DIR]
 ```
 
-It hard links each group's ORANGE PDF (`orange/*.orange.pdf`), LINX
-HTML report (`linx/*_linx.html`), PURPLE circos plot
-(`purple/plot/*.circos.png`) and CUPPA plot (`cuppa/*.cuppa.vis.png`,
-tumor/normal groups only) from `OUT_DIR` (default `out`) into
-`RESULTS_DIR/PDF`, `RESULTS_DIR/HTML` and `RESULTS_DIR/PNG` (default
-`results`). Hard links take no extra space but need both folders on
-the same file system. Rerunning skips links already in place and
-reports, without replacing, a different file under an existing name.
+It hard links each group's ORANGE PDF (`orange/*.orange.pdf`), QSEE
+QC report (`qsee/*.qsee.vis.report.pdf` and `.png`), LINX HTML report
+(`linx/*_linx.html`), PURPLE circos plot (`purple/plot/*.circos.png`)
+and CUPPA plot (`cuppa/*.cuppa.vis.png`, tumor/normal groups only)
+from `OUT_DIR` (default `out`) into `RESULTS_DIR/PDF`,
+`RESULTS_DIR/HTML` and `RESULTS_DIR/PNG` (default `results`). Hard
+links take no extra space but need both folders on the same file
+system. Rerunning skips links already in place and reports, without
+replacing, a different file under an existing name.
+
+Deliverables made after the pipeline go under `res/prism/` in the
+folder that holds `OUT_DIR`; their logs go to `OUT_DIR/logs/other/`,
+next to the pipeline's own. To run QSEE (Hartwig's QC tool) once over
+all groups:
+
+```bash
+sbatch ./Prism/qcCohort.sh [OUT_DIR]
+```
+
+oncoanalyser runs QSEE once per group (`modules/local/qsee/main.nf`
+passes one `-tumor` and `-reference`, never `-sample_id_file` or
+`-merge_plots`). `qcCohort.sh` copies each sample's QSEE input files
+from `OUT_DIR` to a temp folder under `/localscratch`, then runs the
+QSEE 1.0 image from the pipeline's Singularity cache with
+`-sample_id_file` and `-merge_plots`. Reference files come from
+`ref_data_hmf_data_path` in the newest
+`OUT_DIR/pipeline_info/params_*.json`. Output in `res/prism/qc/hmf/`:
+
+- `multisample.qsee.vis.report.<set>.pdf`: one page per tumor and its
+  normal, against the Hartwig cohort percentiles (the same plots as
+  the per-group reports; QSEE 1.0 does not plot samples together)
+- `sample_ids.<set>.tsv`: the sample list given to QSEE
+- `data/multisample.qsee.status.<set>.tsv.gz`: PASS/WARN/FAIL per
+  sample and metric
+- `data/multisample.qsee.vis.data.<set>.tsv.gz`: metric values per
+  sample
+
+QSEE writes everything to one folder and its plot step reads the
+metric table back from there, so the script points it at `data/` and
+then moves the PDF up. Logs in `OUT_DIR/logs/other/`:
+`qsee_multisample.<set>.log`, and `qcCohort.<jobid>.out`, which the
+job moves there from the submit folder at its end (sbatch only; only a
+file with exactly that name is moved).
+
+`<set>` is `tumor_normal` or `tumor_only`. QSEE pairs tumors and
+normals by position in the sample list and stops unless every tumor
+has a normal or none does, so the two kinds of group run separately.
+A set with only one sample gets QSEE's single-sample file names. The
+job asks for 4 CPUs, 16 GB and 1 hour (`cpushort,cmobic_short`); one
+group took about 20 seconds in the pipeline.
 
 ## 8. Optional controls
 

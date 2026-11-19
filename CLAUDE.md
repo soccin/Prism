@@ -30,6 +30,7 @@ sbatch ./Prism/runOncoanalyser.sh INPUT.csv [WORK_DIR]  # as a SLURM job
 ./Prism/runOncoanalyser.sh INPUT.csv [WORK_DIR]         # in the current shell
 ./Prism/deliverLocal.sh [OUT_DIR] [RESULTS_DIR]         # hard link reports into results/{PDF,HTML,PNG}
 sbatch ./Prism/qcCohort.sh [OUT_DIR]                    # QSEE over all groups into res/prism/qc/hmf/
+sbatch ./Prism/cohortReport.sh [-m MANIFEST] [-g GENES] [-p FRAC] [OUT_DIR]  # cohort report into res/prism/cohort/
 ```
 
 Post-pipeline layout (user decision): deliverables go under
@@ -47,8 +48,9 @@ samplesheet.
 Checks after a change (there is no test suite):
 
 ```
-bash -n Prism/runOncoanalyser.sh Prism/deliverLocal.sh Prism/qcCohort.sh
-shellcheck -x Prism/runOncoanalyser.sh Prism/00.SETUP.sh Prism/deliverLocal.sh Prism/qcCohort.sh
+bash -n Prism/runOncoanalyser.sh Prism/deliverLocal.sh Prism/qcCohort.sh Prism/cohortReport.sh
+shellcheck -x Prism/runOncoanalyser.sh Prism/00.SETUP.sh Prism/deliverLocal.sh Prism/qcCohort.sh Prism/cohortReport.sh
+Rscript --vanilla -e "invisible(parse('Prism/scripts/cohortReport.R'))"
 Prism/bin/nextflow lint Prism/conf/iris.config
 Prism/bin/nextflow -c Prism/conf/iris.config config -flat
 ```

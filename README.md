@@ -67,11 +67,59 @@ All commands are run from the project folder.
    separately (`tumor_normal`, `tumor_only`), because QSEE needs a
    normal for every tumor or for none.
 
+5. Write the cohort report, as a SLURM job or on a compute node:
+
+   ```
+   sbatch ./Prism/cohortReport.sh [-m MANIFEST] [-g GENES] [-p FRAC] [OUT_DIR]
+   ```
+
+   It reads the result tables of every group and writes
+   `res/prism/cohort/prism_report.xlsx`, with one CSV per table in
+   `data/`: per-gene counts over the cohort (overall and per sample
+   class), and the events per sample (somatic variants, gene copy
+   number, gene disruptions with breakpoints and support, fusions,
+   viruses, whole genome duplication, DPYD status). It counts and
+   lists; it applies no significance test and leaves no sample out.
+   The first two sheets are for the genes of interest; the last two
+   are `manifest`, which says what each sheet holds, and `glossary`,
+   which explains every column, once.
+
+   - `MANIFEST`: CSV with `sample_id` (tumor sample) and
+     `sample_class` (for example `Tumor`, `CellLine`); other columns
+     are copied to the `samples` sheet. Without it every sample has
+     class `Tumor`.
+   - `GENES`: text file, one gene symbol per line: the genes of
+     interest. They are marked in the gene tables and get the first
+     two sheets: `genes_of_interest_events` (every event in them, one
+     row per event) and `genes_of_interest` (every gene in every
+     sample).
+   - Without `-g` the genes of interest are the genes with a pipeline
+     driver call of likelihood 0.8 or higher in at least one sample.
+     That list is written to `genes_of_interest_default.txt` next to
+     the workbook; edit a copy and give it back with `-g`.
+   - Events on chrX and chrY are reported only for samples with a
+     value in a manifest column named `sex` and a matched normal.
+   - A breakpoint found at the same base pair in more than one sample
+     is flagged (`same_bp_flag`) and listed in a workbook of its own,
+     `prism_sv_same_breakpoint.xlsx`.
+   - `-p FRAC`: the gene tables in the workbook keep a gene altered
+     in at least max(2, FRAC x samples) samples (default 0.05).
+     `data/gene_summary_all.csv` has every gene.
+   - `gene_summary_HC` is counted without the breakends at a shared
+     breakpoint; `gene_summary_UnFilt` counts every breakend. Both
+     give the number of distinct, shared and private breakpoints per
+     gene (`n_bp_distinct`, `n_bp_shared`, `n_bp_private`).
+
+   It needs `Rscript` on the `PATH`, with the R packages `tidyverse`,
+   `fs` and `openxlsx`. A rerun replaces the workbooks, the CSVs and,
+   without `-g`, the default gene list.
+
 Outputs go to the project folder, not to `Prism/`:
 
 - `out/`: pipeline results (`outdir` in `conf/params.yaml`)
 - `res/prism/`: deliverables made after the pipeline from `out/`
-  (`res/prism/qc/hmf/` from `qcCohort.sh`); their logs go to
+  (`res/prism/qc/hmf/` from `qcCohort.sh`, `res/prism/cohort/` from
+  `cohortReport.sh`); their logs go to
   `out/logs/other/`
 - `oncoanalyser.<jobid>.out`: head job log (sbatch only)
 - `.nextflow.log`, `.nextflow/`: Nextflow log and run history
@@ -116,6 +164,7 @@ Prism/
   runOncoanalyser.sh    run script (sbatch or direct)
   deliverLocal.sh       hard links the reports from out/ into results/
   qcCohort.sh           QSEE over all groups, into res/prism/qc/hmf/
+  cohortReport.sh       cohort report, into res/prism/cohort/
   00.SETUP.sh           one-time setup: installs Nextflow into bin/
   bin/                  nextflow (installed by 00.SETUP.sh, not tracked)
   conf/
@@ -125,6 +174,7 @@ Prism/
     params.yaml              pipeline parameters (mode, genome, outdir)
   scripts/
     makeOncoanalyserInput.R  builds the samplesheet
+    cohortReport.R           builds the cohort report (run by cohortReport.sh)
   examples/             templates for mapping.csv and manifest.csv
   docs/                 pipeline instructions and notes
 ```

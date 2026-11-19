@@ -467,13 +467,14 @@ To collect the reports for delivery, run from the project directory:
 ```
 
 It hard links each group's ORANGE PDF (`orange/*.orange.pdf`), QSEE
-QC PDF (`qsee/*.qsee.vis.report.pdf`), LINX HTML report (`linx/*_linx.html`), PURPLE circos plot
-(`purple/plot/*.circos.png`) and CUPPA plot (`cuppa/*.cuppa.vis.png`,
-tumor/normal groups only) from `OUT_DIR` (default `out`) into
-`RESULTS_DIR/PDF`, `RESULTS_DIR/HTML` and `RESULTS_DIR/PNG` (default
-`results`). Hard links take no extra space but need both folders on
-the same file system. Rerunning skips links already in place and
-reports, without replacing, a different file under an existing name.
+QC report (`qsee/*.qsee.vis.report.pdf` and `.png`), LINX HTML report
+(`linx/*_linx.html`), PURPLE circos plot (`purple/plot/*.circos.png`)
+and CUPPA plot (`cuppa/*.cuppa.vis.png`, tumor/normal groups only)
+from `OUT_DIR` (default `out`) into `RESULTS_DIR/PDF`,
+`RESULTS_DIR/HTML` and `RESULTS_DIR/PNG` (default `results`). Hard
+links take no extra space but need both folders on the same file
+system. Rerunning skips links already in place and reports, without
+replacing, a different file under an existing name.
 
 ## 8. Optional controls
 

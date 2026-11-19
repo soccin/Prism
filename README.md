@@ -45,11 +45,12 @@ All commands are run from the project folder.
    ./Prism/deliverLocal.sh [OUT_DIR] [RESULTS_DIR]
    ```
 
-   It hard links each group's ORANGE PDF, QSEE QC PDF, LINX HTML
-   report, PURPLE circos plot and CUPPA plot from `OUT_DIR` (default `out`) into
-   `RESULTS_DIR/PDF`, `RESULTS_DIR/HTML` and `RESULTS_DIR/PNG` (default
-   `results`). Both folders must be on the same file system. Rerun it
-   to add new files; existing links are skipped.
+   It hard links each group's ORANGE PDF, QSEE QC report (PDF and
+   PNG), LINX HTML report, PURPLE circos plot and CUPPA plot from
+   `OUT_DIR` (default `out`) into `RESULTS_DIR/PDF`,
+   `RESULTS_DIR/HTML` and `RESULTS_DIR/PNG` (default `results`). Both
+   folders must be on the same file system. Rerun it to add new
+   files; existing links are skipped.
 
 Outputs go to the project folder, not to `Prism/`:
 

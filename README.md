@@ -70,17 +70,17 @@ All commands are run from the project folder.
 5. Write the cohort report, as a SLURM job or on a compute node:
 
    ```
-   sbatch ./Prism/cohortReport.sh [-m MANIFEST] [-g GENES] [-p FRAC] [OUT_DIR]
+   sbatch ./Prism/cohortReport.sh [-m MANIFEST] [-g GENES] [OUT_DIR]
    ```
 
    It reads the result tables of every group and writes
    `res/prism/cohort/prism_report.xlsx`, with one CSV per table in
-   `data/`: per-gene counts over the cohort (overall and per sample
-   class), and the events per sample (somatic variants, gene copy
+   `data/`: the sample-level results with their counts over the
+   cohort, and the events per sample (somatic variants, gene copy
    number, gene disruptions with breakpoints and support, fusions,
    viruses, whole genome duplication, DPYD status). It counts and
    lists; it applies no significance test and leaves no sample out.
-   The first two sheets are for the genes of interest; the last two
+   The first sheet is for the genes of interest; the last two
    are `manifest`, which says what each sheet holds, and `glossary`,
    which explains every column, once.
 
@@ -89,10 +89,8 @@ All commands are run from the project folder.
      are copied to the `samples` sheet. Without it every sample has
      class `Tumor`.
    - `GENES`: text file, one gene symbol per line: the genes of
-     interest. They are marked in the gene tables and get the first
-     two sheets: `genes_of_interest_events` (every event in them, one
-     row per event) and `genes_of_interest` (every gene in every
-     sample).
+     interest. They get the first sheet, `genes_of_interest_events`:
+     every event in them, one row per event.
    - Without `-g` the genes of interest are the genes with a pipeline
      driver call of likelihood 0.8 or higher in at least one sample.
      That list is written to `genes_of_interest_default.txt` next to
@@ -102,13 +100,6 @@ All commands are run from the project folder.
    - A breakpoint found at the same base pair in more than one sample
      is flagged (`same_bp_flag`) and listed in a workbook of its own,
      `prism_sv_same_breakpoint.xlsx`.
-   - `-p FRAC`: the gene tables in the workbook keep a gene altered
-     in at least max(2, FRAC x samples) samples (default 0.05).
-     `data/gene_summary_all.csv` has every gene.
-   - `gene_summary_HC` is counted without the breakends at a shared
-     breakpoint; `gene_summary_UnFilt` counts every breakend. Both
-     give the number of distinct, shared and private breakpoints per
-     gene (`n_bp_distinct`, `n_bp_shared`, `n_bp_private`).
 
    It needs `Rscript` on the `PATH`, with the R packages `tidyverse`,
    `fs` and `openxlsx`. A rerun replaces the workbooks, the CSVs and,

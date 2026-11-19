@@ -30,7 +30,7 @@ sbatch ./Prism/runOncoanalyser.sh INPUT.csv [WORK_DIR]  # as a SLURM job
 ./Prism/runOncoanalyser.sh INPUT.csv [WORK_DIR]         # in the current shell
 ./Prism/deliverLocal.sh [OUT_DIR] [RESULTS_DIR]         # hard link reports into results/{PDF,HTML,PNG}
 sbatch ./Prism/qcCohort.sh [OUT_DIR]                    # QSEE over all groups into res/prism/qc/hmf/
-sbatch ./Prism/cohortReport.sh [-m MANIFEST] [-g GENES] [-p FRAC] [OUT_DIR]  # cohort report into res/prism/cohort/
+sbatch ./Prism/cohortReport.sh [-m MANIFEST] [-g GENES] [OUT_DIR]  # cohort report into res/prism/cohort/
 ```
 
 Post-pipeline layout (user decision): deliverables go under

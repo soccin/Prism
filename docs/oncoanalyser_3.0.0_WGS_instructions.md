@@ -520,7 +520,7 @@ group took about 20 seconds in the pipeline.
 To write the cohort report:
 
 ```bash
-sbatch ./Prism/cohortReport.sh [-m MANIFEST] [-g GENES] [-p FRAC] [OUT_DIR]
+sbatch ./Prism/cohortReport.sh [-m MANIFEST] [-g GENES] [OUT_DIR]
 ```
 
 `cohortReport.sh` runs `scripts/cohortReport.R` (`Rscript --vanilla`;
@@ -528,12 +528,12 @@ packages `tidyverse`, `fs`, `openxlsx`), which reads the PURPLE, LINX,
 Virus Interpreter, CHORD, SIGS, LILAC, PEACH and QSEE tables of every
 group and writes `res/prism/cohort/prism_report.xlsx` and one CSV per
 table in `data/`. The report counts and lists events; it applies no
-significance test and leaves no sample out. The first two sheets are
-for the genes of interest: `genes_of_interest_events` lists every
-event in them, one row per event, and `genes_of_interest` gives every
-gene in every sample. The sheets a reader can use directly come next
-(`samples`, `cohort_summary`, `gene_summary_HC`, then the event
-lists), then the full tables (`gene_summary_UnFilt`, `summary_full`).
+significance test and leaves no sample out. The first sheet is for
+the genes of interest: `genes_of_interest_events` lists every event in
+them, one row per event. The sheets a reader can use directly come
+next (`samples`, `cohort_summary`, then the event lists), then the
+supporting tables and `summary_full`. There is no per-gene count
+table over the cohort; see `ISSUES.md`.
 The last two sheets are `manifest`, which says what each sheet holds,
 and `glossary`, which explains every column once, with the sheets
 that have it. The texts of both are in `scripts/cohortReport.R`
@@ -544,26 +544,12 @@ gives a warning in the log. The main rules:
   samples and per class. `summary_full` has the same counts as
   numbers, the groups with and without a matched normal, and the
   median, minimum and maximum of the numeric measures.
-- The gene tables in the workbook keep a gene altered (`n_any`) in at
-  least max(2, FRAC x samples) samples (`-p`, default 0.05).
-  `data/gene_summary_all.csv` has every gene.
-- A breakpoint is a chromosome, position and orientation. The gene
-  tables give the number of different breakpoints per gene over the
-  cohort (`n_bp_distinct`), those found in more than one sample
-  (`n_bp_shared`) and those found in one (`n_bp_private`).
-- `gene_summary_HC` is counted without the breakends at a shared
-  breakpoint: a sample counts toward `n_disruption` only through a
-  breakend at a private breakpoint, and `n_any` follows.
-  `gene_summary_UnFilt` counts every breakend. A deep deletion that
-  PURPLE derives from a shared breakend is still counted in both.
-
 - `MANIFEST` (CSV: `sample_id`, `sample_class`, any other columns)
   sets the class of each tumor sample; without it every sample is
-  `Tumor`. Counts are given for all samples and per class
-  (`gene_summary_by_class`).
+  `Tumor`. `cohort_summary` gives its counts for all samples and per
+  class.
 - `GENES` (one symbol per line, `#` starts a comment) sets the genes
-  of interest. They are marked in the gene tables
-  (`gene_of_interest`) and get the first two sheets.
+  of interest. They get the first sheet.
 - Without `-g` the genes of interest are the genes with a pipeline
   driver call (LINX driver catalog) of likelihood 0.8 or higher in at
   least one sample, those called in the most samples first
@@ -576,21 +562,19 @@ gives a warning in the log. The main rules:
   breakpoint), `pipeline_reported` and `driver_likelihood`. The kinds
   are mutation, amp, partial_amp, deep_del, loh, disruption and
   fusion. A partial amplification (maximum copy number of the gene
-  above 3 x ploidy, minimum not) is listed in this sheet only and is
-  not counted in the gene tables. A fusion gives one row for each of
+  above 3 x ploidy, minimum not) is listed in this sheet only;
+  `gene_cn` has no row for it. A fusion gives one row for each of
   its genes that is a gene of interest.
 - Somatic variants are the PASS records of `purple.somatic.vcf.gz`
   with a missense, inframe, nonsense, frameshift or splice effect on
   the canonical transcript (PAVE `IMPACT` field).
 - Copy number events use PURPLE's driver rules for every gene:
   amplification above 3 x sample ploidy, deep deletion below 0.5
-  copies, LOH below 0.5 minor allele copies. LOH is counted on its
-  own, not in `n_any`.
+  copies, LOH below 0.5 minor allele copies.
 - Disruptions are LINX's disruptive breakends on canonical
   transcripts, with breakpoint, SV type, junction copy number and
   read support (from `purple.sv.vcf.gz`). `weak_support` marks SVs in
-  a LINX cluster of category `ARTIFACT`; counts are given with and
-  without them and the gene table is ranked without them.
+  a LINX cluster of category `ARTIFACT`.
 - `same_bp_flag` marks a breakpoint (chromosome, position,
   orientation) found in more than one sample. They are listed in a
   workbook of their own, `prism_sv_same_breakpoint.xlsx`, not in the
@@ -600,7 +584,7 @@ gives a warning in the log. The main rules:
   normal. The sex PURPLE infers is not reported.
 - DPYD status is from PEACH, which needs the normal; samples without
   one show `not assessed`.
-- The driver gene panel (for `in_panel` and `panel_role`) is read
+- The driver gene panel (for `panel_role` and the LOH rows of `gene_cn`) is read
   from `ref_data_hmf_data_path` in the newest
   `OUT_DIR/pipeline_info/params_*.json`.
 

@@ -52,9 +52,27 @@ All commands are run from the project folder.
    folders must be on the same file system. Rerun it to add new
    files; existing links are skipped.
 
+4. Run QSEE (Hartwig's QC tool) once over all groups, as a SLURM job
+   or on a compute node:
+
+   ```
+   sbatch ./Prism/qcCohort.sh [OUT_DIR]
+   ```
+
+   oncoanalyser runs QSEE once per group. This gives one QC status
+   table, one metric table and one PDF (one page per tumor) for the
+   whole run, in `res/prism/qc/hmf/` next to `OUT_DIR`: the PDFs and
+   sample lists at the top, the tables in `data/`. Its logs go to
+   `OUT_DIR/logs/other/`. Groups with and without a normal are run
+   separately (`tumor_normal`, `tumor_only`), because QSEE needs a
+   normal for every tumor or for none.
+
 Outputs go to the project folder, not to `Prism/`:
 
 - `out/`: pipeline results (`outdir` in `conf/params.yaml`)
+- `res/prism/`: deliverables made after the pipeline from `out/`
+  (`res/prism/qc/hmf/` from `qcCohort.sh`); their logs go to
+  `out/logs/other/`
 - `oncoanalyser.<jobid>.out`: head job log (sbatch only)
 - `.nextflow.log`, `.nextflow/`: Nextflow log and run history
 
@@ -97,6 +115,7 @@ finished tasks as `Cached process`; only unfinished tasks should be
 Prism/
   runOncoanalyser.sh    run script (sbatch or direct)
   deliverLocal.sh       hard links the reports from out/ into results/
+  qcCohort.sh           QSEE over all groups, into res/prism/qc/hmf/
   00.SETUP.sh           one-time setup: installs Nextflow into bin/
   bin/                  nextflow (installed by 00.SETUP.sh, not tracked)
   conf/

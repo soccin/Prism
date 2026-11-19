@@ -29,7 +29,16 @@ Rscript Prism/scripts/makeOncoanalyserInput.R mapping.csv manifest.csv oncoanaly
 sbatch ./Prism/runOncoanalyser.sh INPUT.csv [WORK_DIR]  # as a SLURM job
 ./Prism/runOncoanalyser.sh INPUT.csv [WORK_DIR]         # in the current shell
 ./Prism/deliverLocal.sh [OUT_DIR] [RESULTS_DIR]         # hard link reports into results/{PDF,HTML,PNG}
+sbatch ./Prism/qcCohort.sh [OUT_DIR]                    # QSEE over all groups into res/prism/qc/hmf/
 ```
+
+Post-pipeline layout (user decision): deliverables go under
+`res/prism/` in the folder that holds `out/` (the project folder), with
+the files people read (PDFs, sample lists) at the top of each folder
+and machine tables in `data/`. Logs go to `out/logs/other/`, next to
+the pipeline's own; nothing else is written into `out/`.
+`deliverLocal.sh` is to be redesigned around `res/prism/`; do not
+change it until then.
 
 `WORK_DIR` is the Nextflow work folder of an earlier run; pass it to
 resume that run. Resume from the same project folder and with the same
@@ -38,18 +47,19 @@ samplesheet.
 Checks after a change (there is no test suite):
 
 ```
-bash -n Prism/runOncoanalyser.sh Prism/deliverLocal.sh
-shellcheck -x Prism/runOncoanalyser.sh Prism/00.SETUP.sh Prism/deliverLocal.sh
+bash -n Prism/runOncoanalyser.sh Prism/deliverLocal.sh Prism/qcCohort.sh
+shellcheck -x Prism/runOncoanalyser.sh Prism/00.SETUP.sh Prism/deliverLocal.sh Prism/qcCohort.sh
 Prism/bin/nextflow lint Prism/conf/iris.config
 Prism/bin/nextflow -c Prism/conf/iris.config config -flat
 ```
 
 `-c` goes before `config`. In the `config -flat` output,
 `beforeScript` and `singularity.runOptions` must show `$SLURM_JOB_ID`
-literally. `shellcheck` reports SC1091 for `source "$PDIR/conf/ENV.sh"`;
-that is expected. `lint` and `config` write `.nextflow.log` in the
-current folder, which rotates a run's log there (`.nextflow.log` becomes
-`.nextflow.log.1`). Add `-log <file>` before the command (for example
+literally. `shellcheck` reports SC1091 for `source "$PDIR/conf/ENV.sh"`
+(in `runOncoanalyser.sh` and `qcCohort.sh`); that is expected. `lint`
+and `config` write `.nextflow.log` in the current folder, which
+rotates a run's log there (`.nextflow.log` becomes `.nextflow.log.1`).
+Add `-log <file>` before the command (for example
 `Prism/bin/nextflow -log /localscratch/soccin/<task>/lint.log lint ...`)
 to keep the run logs in place.
 
@@ -61,14 +71,16 @@ Do not start a pipeline run or submit a job unless the user asks.
 
 ## How the pieces fit
 
-`runOncoanalyser.sh` is the only entry point. It:
+`runOncoanalyser.sh` is the only entry point to the pipeline
+(`deliverLocal.sh` and `qcCohort.sh` work on its finished output). It:
 
 1. Finds the Prism folder (`PDIR`). `sbatch` runs a copy of the script
    from the SLURM spool folder, so `$0` is wrong inside a job. The
    script tries, in order, the folder of `$0`, `SBATCH_SCRIPT_DIR` (set
    by the user's `~/bin/sbatch` wrapper), and the `Command=` path from
    `scontrol show job`. A candidate is accepted only if it holds
-   `conf/iris.config`. If that file is renamed, update `is_prism_dir`.
+   `conf/iris.config`. If that file is renamed, update `is_prism_dir`
+   (copied in `qcCohort.sh`).
 2. Sources `conf/ENV.sh`, which sets `NXF_VER`, `NXF_HOME`, a new
    timestamped `NXF_WORK`, the Singularity cache and `NXF_OPTS`.
 3. Makes a temp folder with `mktemp` under
@@ -94,10 +106,13 @@ Values that must stay in agreement across files:
 - The Singularity cache path is in `conf/ENV.sh` (three variables) and
   in `singularity.cacheDir` in `conf/iris.config`.
 - The temp root `/localscratch/soccin/oncoanalyser` is in
-  `runOncoanalyser.sh`, `00.SETUP.sh`, and twice in `conf/iris.config`
-  (`beforeScript` and `runOptions`).
+  `runOncoanalyser.sh`, `00.SETUP.sh`, `qcCohort.sh`, and twice in
+  `conf/iris.config` (`beforeScript` and `runOptions`).
 - The pipeline version 3.0.0 is in `-revision` in `runOncoanalyser.sh`
   and in the reference path in `conf/genome_GRCh38_hmf.config`.
+- `qcCohort.sh` uses the QSEE image of oncoanalyser 3.0.0
+  (`hmftools-qsee:1.0--hdfd78af_0`, from `modules/local/qsee/main.nf`)
+  and the QSEE 1.0 input file list. Check both on a pipeline upgrade.
 - In `conf/iris.config`, `clusterOptions` (QOS) depends on the `queue`
   rule: it drops `--qos=priority` when the queue includes `cpushort`.
   Change them together.

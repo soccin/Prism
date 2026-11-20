@@ -566,7 +566,14 @@ sheets and columns that hold long text have fixed widths
 - `genes_of_interest_events` writes every kind of event into the same
   columns: `event_type`, `event` (what it is), `location`, `support`
   (the evidence, as text), `caution` (weak support, shared
-  breakpoint), `pipeline_reported` and `driver_likelihood`. The kinds
+  breakpoint), `hmf_driver` and `driver_likelihood`. `hmf_driver` is
+  the pipeline's "reported" flag under a plainer name, in every
+  sheet that has it: TRUE if the event is on the pipeline's list of
+  candidate driver events, which follows the Hartwig driver gene
+  panel (per gene, the kinds of event that count). FALSE does not
+  mean the event was not detected, and TRUE does not mean it is well
+  supported or a likely driver. For copy number events the report
+  sets it from the driver list (`drivers` sheet). The kinds
   are mutation, amp, partial_amp, deep_del, loh, disruption and
   fusion. A partial amplification (maximum copy number of the gene
   above 3 x ploidy, minimum not) is listed in this sheet only;

@@ -214,6 +214,8 @@ if (!is.null(opts$manifest)) {
 
 # X/Y events are kept only for a sample with a sex in the manifest and a
 # matched normal; for every other sample they are removed from all tables.
+# The rule keeps the many X/Y events of such samples out of the tables. An
+# event in a gene of the gene list given with --genes is kept in any case.
 if ("sex" %in% names(samples)) {
   samples <- samples |>
     mutate(xy_reported = matched_normal & !is.na(sex) & sex != "")
@@ -223,9 +225,13 @@ if ("sex" %in% names(samples)) {
 xy_ok_samples <- samples |> filter(xy_reported) |> pull(sample_name)
 redacted <- list()
 
-redact_xy <- function(df, chr_cols, label) {
+# gene_cols: the columns that name the gene of the row. A row in a gene of
+# interest is kept.
+redact_xy <- function(df, chr_cols, label, gene_cols = character()) {
   hit <- map(chr_cols, \(col) is_xy_chr(df[[col]])) |> reduce(`|`)
-  drop <- hit & !(df$sample_name %in% xy_ok_samples)
+  in_goi <- map(gene_cols, \(col) df[[col]] %in% genes_of_interest) |>
+    reduce(`|`, .init = rep(FALSE, nrow(df)))
+  drop <- hit & !(df$sample_name %in% xy_ok_samples) & !in_goi
   redacted[[label]] <<- sum(drop)
   df[!drop, ]
 }
@@ -300,7 +306,7 @@ gene_cn <- gene_cn_all |>
     loh = minCopyNumber >= DEEP_DEL_MAX_CN &
       minMinorAlleleCopyNumber < LOH_MAX_MINOR_CN
   ) |>
-  redact_xy("chromosome", "gene_cn") |>
+  redact_xy("chromosome", "gene_cn", "gene") |>
   transmute(
     sample_name, gene, chromosome, band = chromosomeBand, start, end,
     cn_event, loh,
@@ -378,7 +384,7 @@ variants <- samples |>
       mutate(sample_name = sample_name, .before = 1)
   }) |>
   list_rbind() |>
-  redact_xy("chromosome", "somatic_variants")
+  redact_xy("chromosome", "somatic_variants", "gene")
 
 # ---- structural variants ----------------------------------------------
 
@@ -451,24 +457,40 @@ sv_per_sample <- svs |>
     .by = sample_name
   )
 
-sv_ends <- sv_ends |> redact_xy(c("chrom", "other_chrom"), "sv_breakends")
-
 # The same breakpoint (chromosome, position, orientation) in more than one
 # sample. Breakends inferred from copy number (INF) have no base-pair
 # position and are left out.
-same_bp <- sv_ends |>
-  filter(sv_type != "INF", !is.na(pos)) |>
-  summarize(
-    same_bp_n_samples = n_distinct(sample_name),
-    same_bp_samples = collapse_unique(sample_name),
-    .by = breakpoint
-  )
-sv_ends <- sv_ends |>
-  left_join(same_bp, by = "breakpoint") |>
-  mutate(
-    same_bp_n_samples = replace_na(same_bp_n_samples, 1L),
-    same_bp_flag = same_bp_n_samples > 1
-  )
+add_same_bp <- function(df) {
+  same_bp <- df |>
+    filter(sv_type != "INF", !is.na(pos)) |>
+    summarize(
+      same_bp_n_samples = n_distinct(sample_name),
+      same_bp_samples = collapse_unique(sample_name),
+      .by = breakpoint
+    )
+  df |>
+    left_join(same_bp, by = "breakpoint") |>
+    mutate(
+      same_bp_n_samples = replace_na(same_bp_n_samples, 1L),
+      same_bp_flag = same_bp_n_samples > 1
+    )
+}
+
+# sv_ends: without the X/Y rows, compared among themselves. sv_ends_all:
+# the same rows plus the X/Y rows, which are compared over all breakends.
+# The disruptions and fusions take their support from sv_ends_all and are
+# filtered by gene below, so that a gene of interest keeps its X/Y events.
+sv_ends_unfiltered <- sv_ends
+sv_ends <- sv_ends_unfiltered |>
+  redact_xy(c("chrom", "other_chrom"), "sv_breakends") |>
+  add_same_bp()
+sv_ends_all <- bind_rows(
+  sv_ends,
+  sv_ends_unfiltered |>
+    add_same_bp() |>
+    anti_join(sv_ends, by = c("sample_name", "svId", "isStart"))
+)
+rm(sv_ends_unfiltered)
 
 sv_same_breakpoint <- sv_ends |>
   filter(same_bp_flag) |>
@@ -488,9 +510,10 @@ breakends <- read_per_sample(samples, "breakend_file")
 disruptions <- breakends |>
   filter(canonical == "true", disruptive == "true" | reportedStatus == "REPORTED") |>
   inner_join(
-    sv_ends |> select(-vcf_id),
+    sv_ends_all |> select(-vcf_id),
     by = c("sample_name", "svId", "isStart")
   ) |>
+  redact_xy(c("chrom", "other_chrom"), "disruptions", "gene") |>
   left_join(gene_info |> select(gene, gene_length_kb), by = "gene") |>
   mutate(row_id = row_number())
 
@@ -523,7 +546,7 @@ disruptions <- disruptions |>
 
 # Fusions.
 be_gene <- breakends |> select(sample_name, id, gene)
-end_support <- sv_ends |>
+end_support <- sv_ends_all |>
   select(sample_name, vcf_id, tumor_fragments, weak_support, same_bp_n_samples)
 fusions <- read_per_sample(samples, "fusion_file")
 if (nrow(fusions) > 0) {
@@ -536,7 +559,7 @@ if (nrow(fusions) > 0) {
       chrom_5p = parse_coords(fivePrimeCoords)$chrom,
       chrom_3p = parse_coords(threePrimeCoords)$chrom
     ) |>
-    redact_xy(c("chrom_5p", "chrom_3p"), "fusions") |>
+    redact_xy(c("chrom_5p", "chrom_3p"), "fusions", c("gene_5p", "gene_3p")) |>
     left_join(end_support, by = c("sample_name", fivePrimeVcfId = "vcf_id")) |>
     left_join(
       end_support, by = c("sample_name", threePrimeVcfId = "vcf_id"),
@@ -567,7 +590,7 @@ if (nrow(fusions) > 0) {
 
 log_msg("drivers and other tables")
 drivers <- read_per_sample(samples, "driver_file") |>
-  redact_xy("chromosome", "drivers") |>
+  redact_xy("chromosome", "drivers", "gene") |>
   transmute(
     sample_name, gene, chromosome, band = chromosomeBand, driver,
     panel_role = category, likelihood_method = likelihoodMethod,
@@ -1126,7 +1149,8 @@ manifest_text <- tribble(
     "and {sum(!samples$matched_normal)} without. The report counts and lists ",
     "events; it applies no significance test and leaves no sample out. Events ",
     "on chrX and chrY are left out for {nrow(samples) - length(xy_ok_samples)} ",
-    "samples (see xy_reported in the glossary); rows left out: {redacted_txt}. ",
+    "samples (see xy_reported in the glossary), except the events in a gene ",
+    "of a gene list given to the report; rows left out: {redacted_txt}. ",
     "The same tables are in data/ as CSV files for use in code; in Excel open ",
     "this workbook, because Excel changes some gene names to dates when it ",
     "opens a CSV."
@@ -1176,9 +1200,7 @@ manifest_text <- tribble(
   "summary_full", "a measure in a group of samples",
   "The counts of cohort_summary as numbers, also for the samples with and without a matched normal, and the median, minimum and maximum of the numeric measures (purity, ploidy, mutational burden, number of structural variants, number of coding variants).",
   "glossary", "a column",
-  "The meaning of every column in every sheet. A column that is in more than one sheet is explained once.",
-  g("{review_file} (separate file)"), "a shared breakpoint in a sample",
-  "Not in this workbook. Every structural variant breakpoint that is found at the same base pair in more than one sample, inside or outside genes. Independent events are not expected to share a breakpoint, so these are for review."
+  "The meaning of every column in every sheet of this workbook. A column that is in more than one sheet is explained once."
 )
 
 # glossary: every column, once. Columns named after a sample or a sample
@@ -1190,7 +1212,7 @@ glossary_text <- tribble(
   "sample_class", "Class of the sample, from the sample manifest given to the report (for example Tumor or CellLine). Tumor for every sample when no manifest is given.",
   "matched_normal", "TRUE if the sample was run with a matched normal sample. Without one, somatic calls can include germline variants that the filters did not remove, and DPYD status, HR status and signatures are not available.",
   "group", "Group name of the sample in the pipeline run (the name of its result folder).",
-  "xy_reported", "TRUE if events on chrX and chrY are reported for this sample. That needs both a sex in the sample manifest and a matched normal; for all other samples the X/Y events are left out of every sheet.",
+  "xy_reported", "TRUE if events on chrX and chrY are reported for this sample. That needs both a sex in the sample manifest and a matched normal; for all other samples the X/Y events are left out of every sheet, because such a sample can have very many of them. Exception: an event in a gene of a gene list given to the report is kept for every sample.",
   "sex", "Sex of the patient, from the sample manifest.",
   "purity", "Estimated fraction of tumor cells in the sample (PURPLE).",
   "ploidy", "Estimated average copy number of the tumor genome (PURPLE).",
@@ -1285,7 +1307,7 @@ glossary_text <- tribble(
   "disruptive", "TRUE if the breakend breaks the transcript, so that it cannot be made intact from this copy (LINX).",
   "pipeline_reported", "TRUE if the pipeline itself reports this event. For the copy number events of genes_of_interest_events: TRUE if the pipeline's driver list (drivers sheet) has the event.",
   "weak_support", "TRUE if LINX classes the structural variant as a likely artifact, in most cases because the junction is present at under about half a copy with no matching copy number change. In fusions: TRUE if either end has weak support.",
-  "same_bp_flag", "TRUE if the same breakpoint (chromosome, position and orientation, to the base pair) is found in more than one sample. Independent events are not expected to share a breakpoint. Breakends inferred from copy number have no exact position and are not compared.",
+  "same_bp_flag", "TRUE if the same breakpoint (chromosome, position and orientation, to the base pair) is found in more than one sample. Independent events are not expected to share a breakpoint. Breakends inferred from copy number have no exact position and are not compared. All shared breakpoints, inside or outside genes, are listed in a workbook of their own (prism_sv_same_breakpoint.xlsx).",
   "same_bp_n_samples", "Number of samples with this same breakpoint (1 = this sample only). In fusions: the higher of the two ends.",
   "same_bp_samples", "The samples with this same breakpoint.",
   "nearest_other_sample_bp", "Distance in base pairs to the nearest breakend in the same gene in another sample. 0 means the same position. Empty if no other sample has a breakend in the gene.",
@@ -1492,9 +1514,11 @@ sheets <- list(
 # Breakpoints shared between samples are review material, kept out of
 # the report in a workbook of their own.
 review_sheets <- list(sv_same_breakpoint = sv_same_breakpoint |> add_class())
+csv_tables <- c(sheets, review_sheets)
 
-# The glossary covers the columns of both workbooks, the manifest's and
-# its own.
+# The manifest and the glossary of a workbook cover the sheets of that
+# workbook only, their own included. The shared-breakpoint workbook has
+# one data sheet, so it gets a glossary and no manifest.
 manifest_cols_tbl <- tibble(
   sheet = character(), one_row_is = character(), rows = integer(),
   columns = integer(), contents = character()
@@ -1504,17 +1528,16 @@ glossary_cols_tbl <- tibble(
 )
 glossary <- make_glossary(c(
   sheets,
-  list(manifest = manifest_cols_tbl, glossary = glossary_cols_tbl),
-  set_names(review_sheets, review_file)
+  list(manifest = manifest_cols_tbl, glossary = glossary_cols_tbl)
 ))
-manifest <- make_manifest(c(
-  sheets,
-  list(glossary = glossary),
-  set_names(review_sheets, str_glue("{review_file} (separate file)"))
-))
+manifest <- make_manifest(c(sheets, list(glossary = glossary)))
 sheets <- c(sheets, list(manifest = manifest, glossary = glossary))
+review_sheets <- c(
+  review_sheets,
+  list(glossary = make_glossary(c(review_sheets, list(glossary = glossary_cols_tbl))))
+)
 
-csv_tables <- c(sheets, review_sheets)
+csv_tables <- c(csv_tables, list(manifest = manifest, glossary = glossary))
 csv_tables$gene_cn <- gene_cn_events |> add_class()
 iwalk(csv_tables, \(df, name) {
   write_csv(df, path(data_dir, str_c(name, ".csv")), na = "")
@@ -1529,6 +1552,35 @@ TEXT_WIDTHS <- list(
 )
 # Widths of the text columns of genes_of_interest_events.
 COL_WIDTHS <- c(event = 46, location = 50, support = 72, caution = 34)
+# Limits of the widths set from the content, in characters.
+MIN_COL_WIDTH <- 6
+MAX_COL_WIDTH <- 50
+
+# Number of characters a value takes in a cell. Numbers are counted with
+# 6 significant digits, as a cell of ordinary width shows them.
+display_nchar <- function(x) {
+  if (is.numeric(x)) {
+    x <- signif(x, 6)
+  }
+  n <- nchar(as.character(x))
+  n[is.na(x)] <- 0L
+  n
+}
+
+# Column widths from the content: the 95th percentile of the cell lengths,
+# so that a few long values do not set the width, or the header with room
+# for the filter button if that is longer. An xlsx file stores a width as a
+# number, so this is an estimate from character counts, not Excel's own
+# fit to the font.
+auto_widths <- function(df) {
+  content <- map_dbl(df, \(x) {
+    n <- display_nchar(x)
+    n <- n[n > 0]
+    if (length(n) == 0) 0 else ceiling(quantile(n, 0.95, names = FALSE)) + 2
+  })
+  header <- nchar(names(df)) + 4
+  pmin(pmax(content, header, MIN_COL_WIDTH), MAX_COL_WIDTH) |> unname()
+}
 
 write_workbook <- function(sheets, file) {
   wb <- createWorkbook()
@@ -1549,10 +1601,7 @@ write_workbook <- function(sheets, file) {
       }
       setColWidths(
         wb, name, cols = seq_len(ncol(df)),
-        widths = coalesce(
-          unname(COL_WIDTHS[names(df)]),
-          pmin(pmax(nchar(names(df)) + 3, 10), 40)
-        )
+        widths = coalesce(unname(COL_WIDTHS[names(df)]), auto_widths(df))
       )
     }
     log_msg("  {name}: {nrow(df)} rows")
@@ -1569,7 +1618,7 @@ write_workbook <- function(sheets, file) {
 report <- path(res_dir, "prism_report.xlsx")
 write_workbook(sheets, report)
 log_msg("Report: {report}")
-review <- path(res_dir, "prism_sv_same_breakpoint.xlsx")
+review <- path(res_dir, review_file)
 write_workbook(review_sheets, review)
 log_msg("Shared breakpoints: {review}")
 log_msg("Tables: {data_dir}")

@@ -34,7 +34,8 @@
 # sample_class (for example Tumor, CellLine); other columns are copied
 # to the samples sheet. Without it every sample has class Tumor. Events
 # on chrX and chrY are reported only for samples with a value in a
-# manifest column named sex and a matched normal.
+# manifest column named sex and a matched normal. Events in a gene of
+# GENES are reported for every sample.
 # GENES is a text file with one gene symbol per line (# starts a
 # comment): the genes of interest. They get the first sheet,
 # genes_of_interest_events: every event in them, one row per event.

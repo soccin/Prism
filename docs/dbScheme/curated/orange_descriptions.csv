@@ -1,0 +1,130 @@
+type,field,description,source_file,source_column
+OrangeRecord,sampleId,Tumor sample ID.,(run argument),
+OrangeRecord,referenceId,Normal (reference) sample ID. Null in tumor-only mode; ORANGE uses this null to mark tumor-only mode.,(run argument),
+OrangeRecord,samplingDate,Sampling date. ORANGE writes the run date when no sampling date is given; oncoanalyser gives none.,(run argument),
+OrangeRecord,experimentType,Experiment type: WHOLE_GENOME or TARGETED.,(run argument),
+OrangeRecord,configuredPrimaryTumor,Primary tumor as Disease Ontology nodes. Empty when no primary tumor is configured; oncoanalyser configures none.,(run argument),
+OrangeRecord,refGenomeVersion,Reference genome version.,(run argument),
+OrangeRecord,pipelineVersion,Pipeline version string.,(pipeline version file),
+OrangeRecord,purple,"PURPLE results: purity fit, QC, tumor characteristics, drivers, variants, copy number gains and losses, arm copy number.",,
+OrangeRecord,linx,LINX results: fusions and breakends.,,
+OrangeRecord,isofox,RNA results from Isofox. Null without RNA data.,,
+OrangeRecord,lilac,LILAC HLA typing.,,
+OrangeRecord,immuneEscape,Immune escape flags computed by ORANGE from the somatic results (rules in the ORANGE README).,,
+OrangeRecord,virusInterpreter,Virus Interpreter results.,,
+OrangeRecord,chord,CHORD homologous recombination deficiency (HRD) prediction.,,
+OrangeRecord,cuppa,CUPPA tissue of origin prediction.,,
+OrangeRecord,peach,PEACH pharmacogenomic genotypes.,,
+OrangeRecord,sigAllocations,SIGS mutational signature allocations.,,
+OrangeRecord,plots,Paths of the plot images used in the ORANGE PDF.,,
+OrangeDoidNode,doid,Disease Ontology ID.,(run argument),
+OrangeDoidNode,doidTerm,Disease Ontology term.,(run argument),
+PurpleRecord,fit,Purity and ploidy fit with its QC.,,
+PurpleRecord,characteristics,Genome-wide tumor characteristics.,,
+PurpleRecord,somaticDrivers,Somatic driver catalog entries.,,
+PurpleRecord,germlineDrivers,Germline driver catalog entries. Null in tumor-only mode.,,
+PurpleRecord,somaticVariants,"Somatic SNVs and indels. A selection, not every call: far fewer entries than purple.somatic.vcf.gz.",,
+PurpleRecord,germlineVariants,Germline SNVs and indels (a selection).,,
+PurpleRecord,somaticGainsDels,Somatic gene copy number gains and deletions (a selection).,,
+PurpleRecord,germlineGainsDels,Germline gene amplifications and deletions (a selection).,,
+PurpleRecord,armCopyNumberAbberations,"Chromosome arm copy number gains and losses. The key is spelled ""Abberations"" in ORANGE.",,
+PurpleFit,qc,PURPLE QC.,,
+PurpleFit,fittedPurityMethod,"Fit method: NORMAL, HIGHLY_DIPLOID, SOMATIC or NO_TUMOR.",purple/<T>.purple.qc,Method
+PurpleFit,purity,Purity of tumor in the sample.,purple/<T>.purple.purity.tsv,purity
+PurpleFit,minPurity,Minimum purity with score within 10% of the best fit.,purple/<T>.purple.purity.tsv,minPurity
+PurpleFit,maxPurity,Maximum purity with score within 10% of the best fit.,purple/<T>.purple.purity.tsv,maxPurity
+PurpleFit,ploidy,Average ploidy of the tumor after adjusting for purity.,purple/<T>.purple.purity.tsv,ploidy
+PurpleFit,minPloidy,Minimum ploidy with score within 10% of the best fit.,purple/<T>.purple.purity.tsv,minPloidy
+PurpleFit,maxPloidy,Maximum ploidy with score within 10% of the best fit.,purple/<T>.purple.purity.tsv,maxPloidy
+PurpleQC,status,PURPLE QC status: PASS or one or more WARN and FAIL values.,purple/<T>.purple.qc,QCStatus
+PurpleQC,germlineAberrations,"Germline chromosomal aberrations detected from COBALT ratios (KLINEFELTER, TRISOMY_X, TRISOMY_21, TRISOMY_13, TRISOMY_18, TRISOMY_15, XYY, MOSAIC_X), or NONE.",purple/<T>.purple.qc,GermlineAberrations
+PurpleQC,amberMeanDepth,Mean read depth at AMBER heterozygous sites.,purple/<T>.purple.qc,AmberMeanDepth
+PurpleQC,contamination,Contamination rate of the tumor sample estimated by AMBER. AMBER estimates it only with a matched normal.,purple/<T>.purple.qc,Contamination
+PurpleQC,totalCopyNumberSegments,Total number of copy number segments.,purple/<T>.purple.qc,CopyNumberSegments
+PurpleQC,unsupportedCopyNumberSegments,Copy number segments with no SV support on either side. A high number indicates poor sample quality.,purple/<T>.purple.qc,UnsupportedCopyNumberSegments
+PurpleQC,deletedGenes,Number of genes with copy number below 0.5.,purple/<T>.purple.qc,DeletedGenes
+PurpleCharacteristics,wholeGenomeDuplication,True if more than 10 autosomes have major allele copy number above 1.5.,purple/<T>.purple.purity.tsv,wholeGenomeDuplication
+PurpleCharacteristics,microsatelliteIndelsPerMb,Microsatellite indels per megabase.,purple/<T>.purple.purity.tsv,msIndelsPerMb
+PurpleCharacteristics,microsatelliteStatus,"Microsatellite status: MSI, MSS or UNKNOWN.",purple/<T>.purple.purity.tsv,msStatus
+PurpleCharacteristics,tumorMutationalBurdenPerMb,Tumor mutational burden: passing SNVs and indels per megabase.,purple/<T>.purple.purity.tsv,tmbPerMb
+PurpleCharacteristics,tumorMutationalBurdenStatus,"TMB status: HIGH (above 10 per Mb), LOW or UNKNOWN.",purple/<T>.purple.purity.tsv,tmbStatus
+PurpleCharacteristics,tumorMutationalLoad,Tumor mutational load: number of missense variants.,purple/<T>.purple.purity.tsv,tml
+PurpleCharacteristics,tumorMutationalLoadStatus,"TML status: HIGH, LOW or UNKNOWN.",purple/<T>.purple.purity.tsv,tmlStatus
+PurpleCharacteristics,svTumorMutationalBurden,"Number of passing structural variants, excluding inferred and single-breakend calls.",purple/<T>.purple.purity.tsv,svTumorMutationalBurden
+PurpleCharacteristics,lohPercentage,Proportion of the genome with loss of heterozygosity (0 to 1 despite the name). Not described in the PURPLE README.,purple/<T>.purple.qc,LohPercent
+LinxRecord,fusions,Fusions (a selection).,,
+LinxRecord,somaticBreakends,Somatic breakends in genes (a selection).,,
+LinxRecord,germlineBreakends,Germline breakends in genes (a selection). Null in tumor-only mode.,,
+LilacRecord,alleles,"One entry per HLA allele of the top solution, class I and class II.",lilac/<T>.lilac.tsv,
+LilacAllele,geneClass,"Gene group the allele was typed in: MHC_CLASS_1 (HLA-A, -B, -C) or a class II gene such as HLA_DQA1.",lilac/<T>.lilac.tsv,Genes
+LilacAllele,allele,Allele ID.,lilac/<T>.lilac.tsv,Allele
+LilacAllele,qcStatus,LILAC QC status of the allele's gene group: PASS or one or more warnings.,lilac/<T>.lilac.qc.tsv,Status
+LilacAllele,tumorCopyNumber,Allele copy number from the tumor/reference fragment ratio and the PURPLE copy number.,lilac/<T>.lilac.tsv,TumorCopyNumber
+LilacAllele,refFragments,Fragments assigned to the allele in the reference (normal) BAM.,lilac/<T>.lilac.tsv,RefTotal
+LilacAllele,tumorFragments,Fragments assigned to the allele in the tumor BAM.,lilac/<T>.lilac.tsv,TumorTotal
+LilacAllele,rnaFragments,Fragments assigned to the allele in the RNA BAM. Null without RNA.,lilac/<T>.lilac.tsv,RnaTotal
+LilacAllele,somaticMissense,Somatic missense variants matched to the allele.,lilac/<T>.lilac.tsv,SomaticMissense
+LilacAllele,somaticNonsenseOrFrameshift,Somatic nonsense or frameshift variants matched to the allele.,lilac/<T>.lilac.tsv,SomaticNonsenseOrFrameshift
+LilacAllele,somaticSplice,Somatic splice variants matched to the allele.,lilac/<T>.lilac.tsv,SomaticSplice
+LilacAllele,somaticSynonymous,Somatic synonymous variants matched to the allele.,lilac/<T>.lilac.tsv,SomaticSynonymous
+LilacAllele,somaticInframeIndel,Somatic inframe indels matched to the allele.,lilac/<T>.lilac.tsv,SomaticInframeIndel
+ImmuneEscapeRecord,hasHlaEscape,"HLA class I loss of function in HLA-A, -B or -C (rules in the ORANGE README).",(ORANGE),
+ImmuneEscapeRecord,hasAntigenPresentationPathwayEscape,"Inactivation of the antigen presentation pathway (B2M, CALR, TAP1, TAP2, TAPBP, NLRC5, CIITA or RFX5).",(ORANGE),
+ImmuneEscapeRecord,hasIFNGammaPathwayEscape,"Inactivation of the IFN gamma pathway (JAK1, JAK2, IRF2, IFNGR1, IFNGR2, APLNR or STAT1).",(ORANGE),
+ImmuneEscapeRecord,hasPDL1OverexpressionEscape,Possible PD-L1 overexpression: CD274 fully amplified.,(ORANGE),
+ImmuneEscapeRecord,hasCD58InactivationEscape,CD58 inactivation.,(ORANGE),
+ImmuneEscapeRecord,hasEpigeneticSETDB1Escape,SETDB1 fully amplified.,(ORANGE),
+VirusInterpreterData,allViruses,Every virus detected by VIRUSBreakend.,virusinterpreter/<T>.virus.annotated.tsv,
+VirusInterpreterData,reportableViruses,The detected viruses that Virus Interpreter reports (reported = true).,virusinterpreter/<T>.virus.annotated.tsv,
+VirusInterpreterEntry,name,Virus name matching the reference taxid.,virusinterpreter/<T>.virus.annotated.tsv,name
+VirusInterpreterEntry,qcStatus,QC status reported by VIRUSBreakend.,virusinterpreter/<T>.virus.annotated.tsv,qcStatus
+VirusInterpreterEntry,integrations,Number of detected integrations of the virus into the sample genome.,virusinterpreter/<T>.virus.annotated.tsv,integrations
+VirusInterpreterEntry,interpretation,"Virus group from the Virus Interpreter reporting database (HPV, EBV, MCV, HBV, HHV-8), if any.",virusinterpreter/<T>.virus.annotated.tsv,interpretation
+VirusInterpreterEntry,percentageCovered,Percentage of the viral reference sequence covered in the tumor sample.,virusinterpreter/<T>.virus.annotated.tsv,percentageCovered
+VirusInterpreterEntry,meanCoverage,Mean coverage of the viral genome.,virusinterpreter/<T>.virus.annotated.tsv,meanCoverage
+VirusInterpreterEntry,expectedClonalCoverage,Expected coverage if the virus were clonally integrated once in the tumor DNA.,virusinterpreter/<T>.virus.annotated.tsv,expectedClonalCoverage
+VirusInterpreterEntry,reported,Whether Virus Interpreter reports the virus as a driver.,virusinterpreter/<T>.virus.annotated.tsv,reported
+VirusInterpreterEntry,driverInterpretation,"Driver likelihood from the reporting database: HIGH, LOW or UNKNOWN.",virusinterpreter/<T>.virus.annotated.tsv,driverLikelihood
+ChordRecord,BRCA1Value,Probability of BRCA1-type HRD.,chord/<T>.chord.prediction.tsv,p_BRCA1
+ChordRecord,BRCA2Value,Probability of BRCA2-type HRD.,chord/<T>.chord.prediction.tsv,p_BRCA2
+ChordRecord,hrdValue,Probability of HRD.,chord/<T>.chord.prediction.tsv,p_hrd
+ChordRecord,hrStatus,"HR status: HR_DEFICIENT (p_hrd 0.5 or higher), HR_PROFICIENT, or CANNOT_BE_DETERMINED (too few indels, or MSI).",chord/<T>.chord.prediction.tsv,hr_status
+ChordRecord,hrdType,"HRD type when HR deficient: BRCA1_type or BRCA2_type; none otherwise; cannot_be_determined with fewer than 30 SVs.",chord/<T>.chord.prediction.tsv,hrd_type
+CuppaData,mode,CUPPA mode (WGS or WGTS).,(ORANGE),
+CuppaData,predictions,"One entry per cancer type, with the probability from each classifier.",cuppa/<T>.cuppa.vis_data.tsv,data_type = prob
+CuppaData,bestPrediction,The prediction with the highest combined probability.,cuppa/<T>.cuppa.vis_data.tsv,data_type = prob
+CuppaData,simpleDups32To200B,Number of simple duplications of about 30 to 200 bases (a CUPPA SV feature).,cuppa/<T>.cuppa_data.tsv.gz,event.sv SIMPLE_DUP_32B_200B
+CuppaData,maxComplexSize,"Size of the largest complex structural event, as the number of chained SVs (a CUPPA SV feature).",cuppa/<T>.cuppa_data.tsv.gz,event.sv MAX_COMPLEX_SIZE
+CuppaData,telomericSGLs,Number of telomeric single breakends (a CUPPA SV feature).,cuppa/<T>.cuppa_data.tsv.gz,event.sv TELOMERIC_SGL
+CuppaData,LINECount,Number of LINE insertions (a CUPPA SV feature).,cuppa/<T>.cuppa_data.tsv.gz,event.sv LINE
+CuppaPrediction,cancerType,CUPPA cancer type (subtype) label.,cuppa/<T>.cuppa.vis_data.tsv,cancer_type
+CuppaPrediction,likelihood,Probability from the combined DNA classifier (dna_combined).,cuppa/<T>.cuppa.vis_data.tsv,data_value (clf_name = dna_combined)
+CuppaPrediction,snvPairwiseClassifier,Probability from the SNV96 classifier (snv96).,cuppa/<T>.cuppa.vis_data.tsv,data_value (clf_name = snv96)
+CuppaPrediction,genomicPositionClassifier,Probability from the genomic position classifier (gen_pos).,cuppa/<T>.cuppa.vis_data.tsv,data_value (clf_name = gen_pos)
+CuppaPrediction,featureClassifier,Probability from the event (feature) classifier (event).,cuppa/<T>.cuppa.vis_data.tsv,data_value (clf_name = event)
+CuppaPrediction,altSjCohortClassifier,Probability from the alternative splice junction classifier (alt_sj). Null without RNA.,cuppa/<T>.cuppa.vis_data.tsv,data_value (clf_name = alt_sj)
+CuppaPrediction,expressionPairwiseClassifier,Probability from the gene expression classifier (gene_exp). Null without RNA.,cuppa/<T>.cuppa.vis_data.tsv,data_value (clf_name = gene_exp)
+PeachGenotype,gene,Gene name. ORANGE keeps DPYD only; PEACH also calls UGT1A1.,peach/<N>.peach.haplotypes.best.tsv,gene
+PeachGenotype,allele,Haplotype name.,peach/<N>.peach.haplotypes.best.tsv,haplotype
+PeachGenotype,alleleCount,Number of times the haplotype was called for the gene (1 or 2).,peach/<N>.peach.haplotypes.best.tsv,count
+PeachGenotype,haplotype,"Haplotype with zygosity, for example *1_HOM.",(ORANGE),
+PeachGenotype,function,Function of the haplotype.,peach/<N>.peach.haplotypes.best.tsv,function
+PeachGenotype,linkedDrugs,Drugs for which the gene is relevant (semicolon separated).,peach/<N>.peach.haplotypes.best.tsv,linkedDrugs
+PeachGenotype,urlPrescriptionInfo,URLs of prescription advice for the linked drugs (semicolon separated).,peach/<N>.peach.haplotypes.best.tsv,prescriptionUrls
+PeachGenotype,panelVersion,PEACH panel version. Empty in this pipeline.,(ORANGE),
+PeachGenotype,repoVersion,PEACH version. Empty in this pipeline.,(ORANGE),
+SignatureAllocation,signature,Mutational signature name.,sigs/<T>.sig.allocation.tsv,signature
+SignatureAllocation,etiology,Proposed etiology of the signature. Added by ORANGE.,(ORANGE),
+SignatureAllocation,allocation,Number of SNVs allocated to the signature.,sigs/<T>.sig.allocation.tsv,allocation
+SignatureAllocation,percent,Fraction of SNVs allocated to the signature (0 to 1 despite the name).,sigs/<T>.sig.allocation.tsv,percent
+OrangePlots,purpleInputCircosPlot,Path of the PURPLE input circos plot.,purple/plot/,
+OrangePlots,purpleFinalCircosPlot,Path of the PURPLE final circos plot.,purple/plot/,
+OrangePlots,purpleClonalityPlot,Path of the PURPLE clonality plot.,purple/plot/,
+OrangePlots,purpleCopyNumberPlot,Path of the PURPLE copy number plot.,purple/plot/,
+OrangePlots,purpleMinorAlleleMapPlot,Path of the PURPLE minor allele copy number plot.,purple/plot/,
+OrangePlots,purpleVariantCopyNumberPlot,Path of the PURPLE variant copy number plot.,purple/plot/,
+OrangePlots,purplePurityRangePlot,Path of the PURPLE purity range plot.,purple/plot/,
+OrangePlots,purpleRainfallPlot,Path of the PURPLE rainfall plot.,purple/plot/,
+OrangePlots,linxDriverPlots,Paths of the LINX driver plots.,linx/,
+OrangePlots,cuppaSummaryPlot,Path of the CUPPA summary plot.,cuppa/,
+OrangePlots,qSeePlot,Path of the QSEE plot.,qsee/,

@@ -538,7 +538,14 @@ The last two sheets are `manifest`, which says what each sheet holds,
 and `glossary`, which explains every column once, with the sheets
 that have it. The texts of both are in `scripts/cohortReport.R`
 (`manifest_text`, `glossary_text`); a column without a glossary entry
-gives a warning in the log. The main rules:
+gives a warning in the log. Both are built on every run from the
+sheets that are written, and they cover the sheets of their own
+workbook only: `prism_sv_same_breakpoint.xlsx` has its own `glossary`
+sheet. When a sheet or column is added or changed, update its text
+there. Column widths are set from the content (`auto_widths`: the
+95th percentile of the cell lengths, at most 50 characters); the
+sheets and columns that hold long text have fixed widths
+(`TEXT_WIDTHS`, `COL_WIDTHS`). The main rules:
 
 - `cohort_summary` gives each count as `n of N (pct%)`, for all
   samples and per class. `summary_full` has the same counts as
@@ -581,7 +588,11 @@ gives a warning in the log. The main rules:
   report.
 - Events on chrX and chrY are removed for every sample that does not
   have both a value in a manifest column named `sex` and a matched
-  normal. The sex PURPLE infers is not reported.
+  normal. The sex PURPLE infers is not reported. The rule keeps the
+  many X/Y events of such samples out of the tables. An event in a
+  gene of the list given with `-g` is kept for every sample, in every
+  sheet (`gene_cols` of `redact_xy` in the R script). Without `-g` there is
+  no exception: the default list is made after the rule is applied.
 - DPYD status is from PEACH, which needs the normal; samples without
   one show `not assessed`.
 - The driver gene panel (for `panel_role` and the LOH rows of `gene_cn`) is read

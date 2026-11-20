@@ -97,6 +97,7 @@ All commands are run from the project folder.
      the workbook; edit a copy and give it back with `-g`.
    - Events on chrX and chrY are reported only for samples with a
      value in a manifest column named `sex` and a matched normal.
+     Events in a gene of `GENES` are reported for every sample.
    - A breakpoint found at the same base pair in more than one sample
      is flagged (`same_bp_flag`) and listed in a workbook of its own,
      `prism_sv_same_breakpoint.xlsx`.

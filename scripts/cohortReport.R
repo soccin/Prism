@@ -358,7 +358,7 @@ read_somatic_vcf <- function(file, sample_name) {
       transcript,
       hotspot = info_flag(INFO, "HOTSPOT"),
       biallelic = info_flag(INFO, "BIALLELIC"),
-      reported = info_flag(INFO, "REPORTED"),
+      hmf_driver = info_flag(INFO, "REPORTED"),
       tier = info_get(INFO, "TIER"),
       qual = as.numeric(QUAL),
       tumor_depth = as.numeric(fmt_get(FORMAT, tumor, "DP")),
@@ -532,7 +532,7 @@ disruptions <- disruptions |>
   transmute(
     sample_name, gene, gene_length_kb, breakpoint, other_end, sv_type,
     disruptive = disruptive == "true",
-    pipeline_reported = reportedStatus == "REPORTED",
+    hmf_driver = reportedStatus == "REPORTED",
     weak_support, same_bp_flag, same_bp_n_samples, nearest_other_sample_bp,
     region = regionType, coding = codingType, exon_up = exonUp,
     exon_down = exonDown, gene_orientation = geneOrientation,
@@ -567,7 +567,7 @@ if (nrow(fusions) > 0) {
     ) |>
     transmute(
       sample_name, fusion = name, gene_5p, gene_3p,
-      pipeline_reported = reported == "true", reported_type = reportedType,
+      hmf_driver = reported == "true", reported_type = reportedType,
       phased, likelihood, breakpoint_5p = fivePrimeCoords,
       breakpoint_3p = threePrimeCoords, fused_exon_up = fusedExonUp,
       fused_exon_down = fusedExonDown, chain_length = chainLength,
@@ -582,7 +582,7 @@ if (nrow(fusions) > 0) {
 } else {
   fusions <- tibble(
     sample_name = character(), fusion = character(), gene_5p = character(),
-    gene_3p = character(), pipeline_reported = logical()
+    gene_3p = character(), hmf_driver = logical()
   )
 }
 
@@ -644,7 +644,7 @@ if (nrow(viruses) > 0) {
       percent_covered = as.numeric(percentageCovered),
       mean_coverage = as.numeric(meanCoverage),
       expected_clonal_coverage = as.numeric(expectedClonalCoverage),
-      qc_status = qcStatus, pipeline_reported = reported == "true",
+      qc_status = qcStatus, hmf_driver = reported == "true",
       driver_likelihood = driverLikelihood
     )
 } else {
@@ -914,7 +914,7 @@ if (length(genes_of_interest) > 0) {
         str_c(int_chr(tumor_alt_reads), " of ", int_chr(tumor_depth), " reads"),
         str_c("copy number ", num_chr(copy_number))
       ),
-      caution = NA_character_, pipeline_reported = reported, pos = position
+      caution = NA_character_, hmf_driver, pos = position
     )
 
   # Copy number events. The location is the span of the gene. A partial
@@ -1020,7 +1020,7 @@ if (length(genes_of_interest) > 0) {
           NA_character_
         )
       ),
-      pipeline_reported, pos = parse_coords(breakpoint)$pos
+      hmf_driver, pos = parse_coords(breakpoint)$pos
     )
 
   # A fusion gives one row for each of its genes that is a gene of interest.
@@ -1066,7 +1066,7 @@ if (length(genes_of_interest) > 0) {
             NA_character_
           )
         ),
-        pipeline_reported, pos = parse_coords(own_bp)$pos
+        hmf_driver, pos = parse_coords(own_bp)$pos
       )
   }
 
@@ -1091,13 +1091,13 @@ if (length(genes_of_interest) > 0) {
     )
 
   # Copy number events have no reported flag of their own; for them
-  # pipeline_reported says whether the driver list has the event.
+  # hmf_driver says whether the driver list has the event.
   goi_events <- bind_rows(
     goi_mutations, goi_cn_events, goi_disruptions, goi_fusions
   ) |>
     left_join(driver_key, by = c("sample_name", "gene", "event_type")) |>
     mutate(
-      pipeline_reported = coalesce(pipeline_reported, driver_reported, FALSE),
+      hmf_driver = coalesce(hmf_driver, driver_reported, FALSE),
       gene = factor(gene, levels = genes_of_interest),
       event_type = factor(event_type, levels = GOI_EVENT_TYPES)
     ) |>
@@ -1105,7 +1105,7 @@ if (length(genes_of_interest) > 0) {
     mutate(across(c(gene, event_type), as.character)) |>
     select(
       gene, sample_name, event_type, event, location, support, caution,
-      pipeline_reported, driver_likelihood
+      hmf_driver, driver_likelihood
     )
   log_msg(
     "genes of interest: {length(genes_of_interest)} genes, ",
@@ -1161,7 +1161,9 @@ manifest_text <- tribble(
     "and kind of event: each coding mutation, amplification, partial ",
     "amplification, deep deletion, LOH, disruptive breakend and predicted ",
     "fusion, with what it is, where it is, the evidence for it and whether ",
-    "the pipeline reports it. The genes of interest are {goi_txt}. A gene ",
+    "it is on the pipeline's list of candidate driver events (hmf_driver; ",
+    "FALSE does not mean the event was not detected). The genes of interest ",
+    "are {goi_txt}. A gene ",
     "and sample with no event has no row. Partial amplifications are listed ",
     "in this sheet only; gene_cn has no row for them."
   ),
@@ -1184,11 +1186,11 @@ manifest_text <- tribble(
     "the LOH rows of all other genes."
   ),
   "fusions", "a gene fusion in a sample",
-  "Every gene fusion the pipeline predicts from the structural variants, whether or not the pipeline reports it, with both breakpoints, the exons joined, the reading frame and the read support. pipeline_reported marks the fusions the pipeline itself reports.",
+  "Every gene fusion the pipeline predicts from the structural variants, whether or not it involves a known fusion gene, with both breakpoints, the exons joined, the reading frame and the read support. hmf_driver marks the fusions the pipeline lists as candidate drivers.",
   "viruses", "a virus found in a sample",
   "Viral sequence found in the tumor reads: the virus, how much of its genome is covered and how deeply, and the number of integration sites in the human genome.",
   "drivers", "a driver event in a sample",
-  "The pipeline's own list of driver events (mutation, amplification, deletion, disruption) in the genes of its driver panel, each with the pipeline's estimate of the likelihood that the event is a driver.",
+  "The pipeline's own list of candidate driver events (mutation, amplification, deletion, disruption) in the genes of its driver panel, each with the pipeline's estimate of the likelihood that the event is a driver. Most have a low likelihood. These are the events marked hmf_driver in the other sheets; fusions and viruses marked hmf_driver are not in this list.",
   "arm_cn", "a chromosome arm",
   "Copy number of each chromosome arm in each sample, relative to the sample's ploidy: the median copy number of the arm minus the ploidy. Positive values are gains, negative values are losses. One column per sample.",
   "qc", "a quality warning for a sample",
@@ -1286,7 +1288,6 @@ glossary_text <- tribble(
   "transcript", "Ensembl ID of the transcript the effect or breakend is described on (the gene's canonical transcript).",
   "hotspot", "TRUE if the variant is at a known cancer hotspot.",
   "biallelic", "In somatic_variants: TRUE if PURPLE finds no remaining wild-type copy at the variant. In drivers: the same flag for the driver event.",
-  "reported", "TRUE if the pipeline marks the variant as reportable (a coding variant in a driver panel gene).",
   "tier", "Confidence tier of the variant caller (SAGE): HOTSPOT, PANEL, HIGH_CONFIDENCE or LOW_CONFIDENCE.",
   "qual", "Quality score of the variant call.",
   "tumor_depth", "Number of tumor reads at the variant position.",
@@ -1305,7 +1306,7 @@ glossary_text <- tribble(
   "other_end", "Address of the other end of the same structural variant. Empty for a single breakend, where the other end could not be placed.",
   "sv_type", "Type of the structural variant: DEL (deletion), DUP (duplication), INV (inversion), BND (translocation), INS (insertion), SGL (single breakend, other end not placed), INF (inferred from a copy number change).",
   "disruptive", "TRUE if the breakend breaks the transcript, so that it cannot be made intact from this copy (LINX).",
-  "pipeline_reported", "TRUE if the pipeline itself reports this event. For the copy number events of genes_of_interest_events: TRUE if the pipeline's driver list (drivers sheet) has the event.",
+  "hmf_driver", "TRUE if the event is on the pipeline's list of candidate driver events. The list comes from the driver gene panel of the Hartwig Medical Foundation (HMF), the authors of the pipeline's tools: a fixed set of cancer genes that says, for each gene, which kinds of event count (mutation, deletion, disruption, amplification). Every row of every sheet was detected by the pipeline; FALSE means only that the gene is not on the panel or that the panel does not count this kind of event for the gene. TRUE says nothing about how well supported the event is or how likely it is to be a driver; driver_likelihood has the pipeline's estimate. Mutation: the variant has the pipeline's REPORTED flag. Disruption: a disruptive breakend in a panel gene set to count disruptions. Fusion: the pipeline reports it, which needs a known fusion gene. Copy number events of genes_of_interest_events: the drivers sheet has a matching entry for the gene and sample. Virus: the pipeline reports the virus.",
   "weak_support", "TRUE if LINX classes the structural variant as a likely artifact, in most cases because the junction is present at under about half a copy with no matching copy number change. In fusions: TRUE if either end has weak support.",
   "same_bp_flag", "TRUE if the same breakpoint (chromosome, position and orientation, to the base pair) is found in more than one sample. Independent events are not expected to share a breakpoint. Breakends inferred from copy number have no exact position and are not compared. All shared breakpoints, inside or outside genes, are listed in a workbook of their own (prism_sv_same_breakpoint.xlsx).",
   "same_bp_n_samples", "Number of samples with this same breakpoint (1 = this sample only). In fusions: the higher of the two ends.",
@@ -1394,7 +1395,7 @@ glossary_text <- tribble(
   # drivers
   "driver", "Kind of driver event: MUTATION, AMP, PARTIAL_AMP, DEL, DISRUPTION, LOH and others.",
   "likelihood_method", "How the driver likelihood was set: DNDS (mutation rate model), HOTSPOT, BIALLELIC, AMP, DEL or DISRUPTION.",
-  "reported_status", "Whether the pipeline reports the driver event.",
+  "reported_status", "Status of the entry in the pipeline's driver list (REPORTED). Every row of drivers is an hmf_driver event.",
   "missense", "Number of missense variants in the gene behind the driver event.",
   "nonsense", "Number of nonsense variants in the gene behind the driver event.",
   "splice", "Number of splice variants in the gene behind the driver event.",

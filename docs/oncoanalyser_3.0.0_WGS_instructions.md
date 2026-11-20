@@ -517,6 +517,99 @@ A set with only one sample gets QSEE's single-sample file names. The
 job asks for 4 CPUs, 16 GB and 1 hour (`cpushort,cmobic_short`); one
 group took about 20 seconds in the pipeline.
 
+To write the cohort report:
+
+```bash
+sbatch ./Prism/cohortReport.sh [-m MANIFEST] [-g GENES] [OUT_DIR]
+```
+
+`cohortReport.sh` runs `scripts/cohortReport.R` (`Rscript --vanilla`;
+packages `tidyverse`, `fs`, `openxlsx`), which reads the PURPLE, LINX,
+Virus Interpreter, CHORD, SIGS, LILAC, PEACH and QSEE tables of every
+group and writes `res/prism/cohort/prism_report.xlsx` and one CSV per
+table in `data/`. The report counts and lists events; it applies no
+significance test and leaves no sample out. The first sheet is for
+the genes of interest: `genes_of_interest_events` lists every event in
+them, one row per event. The sheets a reader can use directly come
+next (`samples`, `cohort_summary`, then the event lists), then the
+supporting tables and `summary_full`. There is no per-gene count
+table over the cohort; see `ISSUES.md`.
+The last two sheets are `manifest`, which says what each sheet holds,
+and `glossary`, which explains every column once, with the sheets
+that have it. The texts of both are in `scripts/cohortReport.R`
+(`manifest_text`, `glossary_text`); a column without a glossary entry
+gives a warning in the log. Both are built on every run from the
+sheets that are written, and they cover the sheets of their own
+workbook only: `prism_sv_same_breakpoint.xlsx` has its own `glossary`
+sheet. When a sheet or column is added or changed, update its text
+there. Column widths are set from the content (`auto_widths`: the
+95th percentile of the cell lengths, at most 50 characters); the
+sheets and columns that hold long text have fixed widths
+(`TEXT_WIDTHS`, `COL_WIDTHS`). The main rules:
+
+- `cohort_summary` gives each count as `n of N (pct%)`, for all
+  samples and per class. `summary_full` has the same counts as
+  numbers, the groups with and without a matched normal, and the
+  median, minimum and maximum of the numeric measures.
+- `MANIFEST` (CSV: `sample_id`, `sample_class`, any other columns)
+  sets the class of each tumor sample; without it every sample is
+  `Tumor`. `cohort_summary` gives its counts for all samples and per
+  class.
+- `GENES` (one symbol per line, `#` starts a comment) sets the genes
+  of interest. They get the first sheet.
+- Without `-g` the genes of interest are the genes with a pipeline
+  driver call (LINX driver catalog) of likelihood 0.8 or higher in at
+  least one sample, those called in the most samples first
+  (`DEFAULT_GOI_MIN_LIKELIHOOD` in the R script). The list is written
+  to `res/prism/cohort/genes_of_interest_default.txt`; edit a copy and
+  give it back with `-g`. A rerun without `-g` replaces the file.
+- `genes_of_interest_events` writes every kind of event into the same
+  columns: `event_type`, `event` (what it is), `location`, `support`
+  (the evidence, as text), `caution` (weak support, shared
+  breakpoint), `hmf_driver` and `driver_likelihood`. `hmf_driver` is
+  the pipeline's "reported" flag under a plainer name, in every
+  sheet that has it: TRUE if the event is on the pipeline's list of
+  candidate driver events, which follows the Hartwig driver gene
+  panel (per gene, the kinds of event that count). FALSE does not
+  mean the event was not detected, and TRUE does not mean it is well
+  supported or a likely driver. For copy number events the report
+  sets it from the driver list (`drivers` sheet). The kinds
+  are mutation, amp, partial_amp, deep_del, loh, disruption and
+  fusion. A partial amplification (maximum copy number of the gene
+  above 3 x ploidy, minimum not) is listed in this sheet only;
+  `gene_cn` has no row for it. A fusion gives one row for each of
+  its genes that is a gene of interest.
+- Somatic variants are the PASS records of `purple.somatic.vcf.gz`
+  with a missense, inframe, nonsense, frameshift or splice effect on
+  the canonical transcript (PAVE `IMPACT` field).
+- Copy number events use PURPLE's driver rules for every gene:
+  amplification above 3 x sample ploidy, deep deletion below 0.5
+  copies, LOH below 0.5 minor allele copies.
+- Disruptions are LINX's disruptive breakends on canonical
+  transcripts, with breakpoint, SV type, junction copy number and
+  read support (from `purple.sv.vcf.gz`). `weak_support` marks SVs in
+  a LINX cluster of category `ARTIFACT`.
+- `same_bp_flag` marks a breakpoint (chromosome, position,
+  orientation) found in more than one sample. They are listed in a
+  workbook of their own, `prism_sv_same_breakpoint.xlsx`, not in the
+  report.
+- Events on chrX and chrY are removed for every sample that does not
+  have both a value in a manifest column named `sex` and a matched
+  normal. The sex PURPLE infers is not reported. The rule keeps the
+  many X/Y events of such samples out of the tables. An event in a
+  gene of the list given with `-g` is kept for every sample, in every
+  sheet (`gene_cols` of `redact_xy` in the R script). Without `-g` there is
+  no exception: the default list is made after the rule is applied.
+- DPYD status is from PEACH, which needs the normal; samples without
+  one show `not assessed`.
+- The driver gene panel (for `panel_role` and the LOH rows of `gene_cn`) is read
+  from `ref_data_hmf_data_path` in the newest
+  `OUT_DIR/pipeline_info/params_*.json`.
+
+The log `cohortReport.<jobid>.out` is moved to `OUT_DIR/logs/other/`
+at the end of the job. A rerun replaces the workbooks and the CSVs. The
+job asks for 2 CPUs, 16 GB and 1 hour; 14 groups took under a minute.
+
 ## 8. Optional controls
 
 - Skip tools: `--processes_exclude virusinterpreter,orange`

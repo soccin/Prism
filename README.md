@@ -169,6 +169,7 @@ Prism/
     cohortReport.R           builds the cohort report (run by cohortReport.sh)
   examples/             templates for mapping.csv and manifest.csv
   docs/                 pipeline instructions and notes
+    dbScheme/           field-level description of the per-sample outputs
 ```
 
 ## How the run script finds the Prism folder
@@ -207,3 +208,7 @@ are not removed automatically.
 - `docs/NF_SCRIPTING_INFO.md`: rules for writing Nextflow run scripts
   and configs on IRIS, and lessons from building Prism. Copy it into
   the next pipeline's wrapper repo.
+- `docs/dbScheme/`: what the pipeline writes per sample, field by
+  field, as the basis for cohort tables (planned post-processing step).
+  Covers the ORANGE JSON and the per-sample summary files so far; see
+  its `README.md` for the files and how to rebuild them.

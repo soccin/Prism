@@ -1,0 +1,94 @@
+path,role,source,rule,json_type,n_paths,filled_matched,filled_tumor_only,notes
+sampleId,metadata,ORANGE configuration,Tumor sample ID.,string,1,all,all,
+referenceId,metadata,ORANGE configuration,Normal sample ID.,string,1,all,none,Null in tumor-only mode; ORANGE uses that to mark the mode.
+samplingDate,metadata,ORANGE configuration,Date ORANGE ran.,date,1,all,all,Not the date the sample was taken.
+experimentType,metadata,ORANGE configuration,WHOLE_GENOME or TARGETED.,enum,1,all,all,
+configuredPrimaryTumor,metadata,ORANGE configuration,Primary tumor set in the configuration.,array,3,none,none,Empty here.
+refGenomeVersion,metadata,ORANGE configuration,Reference genome version.,enum,1,all,all,
+pipelineVersion,metadata,ORANGE configuration,ORANGE's default value.,string,1,all,all,"ORANGE 5.0.1 reads the pipeline version file but writes its default value, OA_V3_0."
+purple.fit,copy,purple/<T>.purple.purity.tsv; purple/<T>.purple.qc,,object,16,all,all,
+purple.characteristics,copy,purple/<T>.purple.purity.tsv; lohPercentage from purple/<T>.purple.qc LohPercent,,object,10,all,all,lohPercentage is rounded to 3 significant digits and is a fraction (0 to 1).
+purple.somaticDrivers,copy,purple/<T>.purple.driver.catalog.somatic.tsv,Entries whose reportedStatus is not NOT_REPORTED.,array,9,all,all,Count checked in all 14 samples.
+purple.somaticDrivers[].driverInterpretation,derived,driverLikelihood,"HIGH at 0.8 or more, MEDIUM at 0.2 or more, else LOW.",enum,1,all,all,
+purple.germlineDrivers,copy,purple/<T>.purple.driver.catalog.germline.tsv,Entries whose reportedStatus is not NOT_REPORTED.,array,9,some,none,Null in tumor-only mode.
+purple.germlineDrivers[].driverInterpretation,derived,driverLikelihood,"HIGH at 0.8 or more, MEDIUM at 0.2 or more, else LOW.",enum,1,some,none,
+purple.somaticVariants,copy,purple/<T>.purple.somatic.vcf.gz,PASS records with the REPORTED flag.,array,34,all,all,"Count checked in all 14 samples: 1 to 30 variants per sample, under 0.1% of the PASS records."
+purple.somaticVariants[].driverLikelihood,copy,purple/<T>.purple.driver.catalog.somatic.tsv,driverLikelihood of the gene's MUTATION entry; 0 if none.,number,1,all,all,
+purple.somaticVariants[].otherImpacts,derived,purple/<T>.purple.somatic.vcf.gz,Reported non-canonical transcripts from the VCF's other-effects annotation.,array,10,none,none,"affectedCodon, affectedExon, inSpliceRegion and codingEffect are taken from the canonical impact, not from the other transcript. Empty here."
+purple.somaticVariants[].rnaDepth,rna,,Read counts in the RNA BAM.,object,3,none,none,Null without RNA data.
+purple.somaticVariants[].localPhaseSets,derived,purple/<T>.purple.somatic.vcf.gz,Local phase set IDs shared with another listed variant within 1000 bases.,array,1,some,some,
+purple.somaticVariants[].plotFilename,plot,,Path of the SAGE plot of the variant.,string,1,all,all,
+purple.somaticVariants[].reported,derived,canonicalImpact.reported and otherImpacts[].reported,True if any impact is reported.,boolean,1,all,all,Computed by the data model and written to the JSON.
+purple.germlineVariants,copy,purple/<T>.purple.germline.vcf.gz,Records with the REPORTED flag.,array,34,none,none,Null in tumor-only mode. Empty in every matched sample here.
+purple.germlineVariants[].driverLikelihood,copy,purple/<T>.purple.driver.catalog.germline.tsv,driverLikelihood of the gene's GERMLINE_MUTATION entry; 0 if none.,number,1,none,none,
+purple.germlineVariants[].otherImpacts,derived,purple/<T>.purple.germline.vcf.gz,Reported non-canonical transcripts from the VCF's other-effects annotation.,array,10,none,none,"affectedCodon, affectedExon, inSpliceRegion and codingEffect are taken from the canonical impact."
+purple.germlineVariants[].rnaDepth,rna,,Read counts in the RNA BAM.,object,3,none,none,Null without RNA data.
+purple.germlineVariants[].localPhaseSets,derived,purple/<T>.purple.germline.vcf.gz,Local phase set IDs shared with another listed variant within 1000 bases.,array,1,none,none,
+purple.germlineVariants[].plotFilename,plot,,Always empty for germline variants.,string,1,none,none,
+purple.germlineVariants[].reported,derived,canonicalImpact.reported and otherImpacts[].reported,True if any impact is reported.,boolean,1,none,none,
+purple.somaticGainsDels,copy,purple/<T>.purple.driver.catalog.somatic.tsv joined to purple/<T>.purple.cnv.gene.tsv (relativeCopyNumber; minMinorAlleleCopies) and purple/<T>.purple.chromosome_arm.tsv (armCopyNumber: mean copy number of the gene's arm),"Driver catalog entries of type AMP, PARTIAL_AMP, DEL, HET_DEL and LOH that are not NOT_REPORTED.",array,23,some,some,minCopyNumber and maxCopyNumber come from the driver catalog (negative values set to 0).
+purple.somaticGainsDels[].driver.driverInterpretation,derived,driverLikelihood,"HIGH at 0.8 or more, MEDIUM at 0.2 or more, else LOW.",enum,1,some,some,
+purple.somaticGainsDels[].geneRange,derived,driver type,"FULL for AMP, PARTIAL for every other type.",string,1,some,some,A whole-gene deletion is labeled PARTIAL.
+purple.somaticGainsDels[].tpm,rna,,Gene expression.,number,1,none,none,Null without RNA data.
+purple.somaticGainsDels[].tpmPercentile,rna,,Gene expression percentile.,number,1,none,none,Null without RNA data.
+purple.somaticGainsDels[].tpmFoldChange,rna,,Gene expression fold change.,number,1,none,none,Null without RNA data.
+purple.somaticGainsDels[].plotFilename,plot,,Path of the LINX plot of the cluster.,string,1,some,some,
+purple.germlineGainsDels,copy,purple/<T>.purple.driver.catalog.germline.tsv joined to purple/<T>.purple.germline_amp_del.tsv (PASS and REPORTED rows) and purple/<T>.purple.cnv.gene.tsv and purple/<T>.purple.chromosome_arm.tsv,GERMLINE_DELETION and GERMLINE_AMP driver entries that are REPORTED.,array,20,some,none,Null in tumor-only mode.
+purple.germlineGainsDels[].driver.driverInterpretation,derived,driverLikelihood,"HIGH at 0.8 or more, MEDIUM at 0.2 or more, else LOW.",enum,1,some,none,
+purple.germlineGainsDels[].germlineAmpDelFields.germlineMinCopyNumber,derived,purple/<T>.purple.germline_amp_del.tsv,Lowest GermlineCopyNumber over the gene's rows.,number,1,some,none,
+purple.germlineGainsDels[].geneRange,derived,purple/<T>.purple.germline_amp_del.tsv,"PARTIAL if the first row is partial, else FULL.",string,1,some,none,
+purple.germlineGainsDels[].minCopyNumber,derived,purple/<T>.purple.germline_amp_del.tsv,Lowest TumorCopyNumber over the gene's rows.,number,1,some,none,
+purple.germlineGainsDels[].maxCopyNumber,derived,purple/<T>.purple.germline_amp_del.tsv and purple.cnv.gene.tsv,Highest TumorCopyNumber over the gene's rows (or the gene maximum if a row is partial).,number,1,some,none,
+purple.germlineGainsDels[].tpm,rna,,Gene expression.,number,1,none,none,Null without RNA data.
+purple.germlineGainsDels[].tpmPercentile,rna,,Gene expression percentile.,number,1,none,none,Null without RNA data.
+purple.germlineGainsDels[].tpmFoldChange,rna,,Gene expression fold change.,number,1,none,none,Null without RNA data.
+purple.germlineGainsDels[].plotFilename,plot,,Always empty for germline entries.,string,1,none,none,
+purple.armCopyNumberAbberations,derived,purple/<T>.purple.chromosome_arm.tsv; ploidy and gender of purple/<T>.purple.purity.tsv,"Arms whose mean copy number is above the gain or below the loss threshold of the expected ploidy (ploidy, halved for X and Y in males; Y skipped in females). type GAIN or LOSS, relativeCopyNumber = mean copy number / expected ploidy, driverInterpretation from the PURPLE library thresholds.",array,4,all,all,The key is misspelled (Abberations) in ORANGE.
+purple.armCopyNumberAbberations[].chromosome,copy,purple/<T>.purple.chromosome_arm.tsv,chromosome with the chr prefix.,string,1,all,all,
+purple.armCopyNumberAbberations[].arm,copy,purple/<T>.purple.chromosome_arm.tsv,,string,1,all,all,
+purple.armCopyNumberAbberations[].copyNumber,copy,purple/<T>.purple.chromosome_arm.tsv,medianCopyNumber.,number,1,all,all,"The arm is selected by its mean copy number, but this field holds the median."
+linx.fusions,copy,linx/somatic_annotations/<T>.linx.fusion.tsv joined to linx.breakend.tsv and linx.svs.tsv,Rows with reported = true.,array,15,some,none,Count checked in all 14 samples. For enhancer fusions geneUp holds the transcript ID (the IG or TR name).
+linx.fusions[].contextUp,derived,linx.breakend.tsv regionType; linx.fusion.tsv fusedExonUp,"Promoter Region, Exon N, Post-coding, IG or Unknown.",string,1,some,none,
+linx.fusions[].contextDown,derived,linx.breakend.tsv regionType; linx.fusion.tsv fusedExonDown,"Promoter Region, Exon N, Post-coding, IG or Unknown.",string,1,some,none,
+linx.fusions[].junctionCopyNumber,derived,linx.svs.tsv junctionCopyNumberMin and Max,Mean over the two breakends of (min + max) / 2.,number,1,some,none,
+linx.fusions[].rnaSupport,rna,,RNA fragments supporting the fusion.,object,3,none,none,Null without RNA data.
+linx.fusions[].plotFilename,plot,,Path of the LINX plot of the cluster.,string,1,some,none,
+linx.somaticBreakends,copy,linx/somatic_annotations/<T>.linx.breakend.tsv joined to linx.svs.tsv (cluster; position from coords) and linx.driver.catalog.tsv (driverType and driverLikelihood; DISRUPTION and 0 if the gene has no entry),Rows with reportedStatus = REPORTED.,array,22,all,all,Count checked in all 14 samples.
+linx.somaticBreakends[].chromosomeBand,annotation,position,Cytoband of the position (ORANGE cytoband table).,string,1,all,all,
+linx.somaticBreakends[].junctionCopyNumber,derived,linx.svs.tsv junctionCopyNumberMin and Max,(min + max) / 2.,number,1,all,all,
+linx.somaticBreakends[].plotFilename,plot,,Path of the LINX plot of the cluster.,string,1,all,all,
+linx.germlineBreakends,copy,linx/germline_annotations/<T>.linx.germline.breakend.tsv joined to linx.germline.svs.tsv and linx.germline.driver.catalog.tsv,Rows with reportedStatus = REPORTED.,array,22,some,none,Null in tumor-only mode.
+linx.germlineBreakends[].chromosomeBand,annotation,position,Cytoband of the position (ORANGE cytoband table).,string,1,some,none,
+linx.germlineBreakends[].junctionCopyNumber,derived,linx.germline.svs.tsv junctionCopyNumberMin and Max,(min + max) / 2.,number,1,some,none,
+linx.germlineBreakends[].plotFilename,plot,,Always empty for germline breakends.,string,1,none,none,
+isofox,rna,,RNA results.,object,54,none,none,Null without RNA data.
+lilac,copy,lilac/<T>.lilac.tsv; qcStatus from lilac/<T>.lilac.qc.tsv Status of the allele's gene group,All alleles.,object,13,all,all,"refFragments is null in tumor-only mode. Unique, shared and wildcard fragment counts are not copied."
+lilac.alleles[].rnaFragments,rna,,Fragments in the RNA BAM.,integer,1,none,none,Null without RNA data.
+immuneEscape,derived,"purple.somaticDrivers, purple.somaticGainsDels and linx.somaticBreakends of this JSON",True if a gene of the flag's fixed list is hit. Inactivation: a DEL entry in somaticGainsDels (canonical) or a somatic breakend with undisrupted copy number below 0.5. Small variants are not tested.,object,1,all,all,The gene lists are fixed in ORANGE's code.
+immuneEscape.hasHlaEscape,derived,,"HLA-A, HLA-B or HLA-C: an LOH, DEL or HET_DEL driver, or inactivation.",boolean,1,all,all,
+immuneEscape.hasAntigenPresentationPathwayEscape,derived,,"Inactivation of B2M, CALR, TAP1, TAP2, TABBP, NLRC5, CIITA or RFX5.",boolean,1,all,all,"TABBP is not a gene symbol (TAPBP is), so TAPBP is never tested."
+immuneEscape.hasIFNGammaPathwayEscape,derived,,"Inactivation of JAK1, JAK2, IRF2, IFNGR1, IFNGR2, APLNR or STAT1.",boolean,1,all,all,
+immuneEscape.hasPDL1OverexpressionEscape,derived,,CD274 with an AMP entry in somaticGainsDels.,boolean,1,all,all,
+immuneEscape.hasCD58InactivationEscape,derived,,Inactivation of CD58.,boolean,1,all,all,
+immuneEscape.hasEpigeneticSETDB1Escape,derived,,SETDB1 with an AMP entry in somaticGainsDels.,boolean,1,all,all,
+virusInterpreter,copy,virusinterpreter/<T>.virus.annotated.tsv,allViruses: rows with blacklisted = false. reportableViruses: those with reported = true.,object,21,all,all,Counts checked in all 14 samples. taxid and blacklisted are not copied.
+chord,copy,chord/<T>.chord.prediction.tsv,,object,6,all,none,Null in tumor-only mode. hrStatus is upper-cased.
+cuppa,copy,cuppa/<T>.cuppa.vis_data.tsv,,object,1,all,none,"Null in tumor-only mode. Read from vis_data, not pred_summ."
+cuppa.mode,derived,cuppa.vis_data.tsv classifiers,WGS when the main classifier is dna_combined (WGTS with RNA).,enum,1,all,none,
+cuppa.predictions,copy,cuppa/<T>.cuppa.vis_data.tsv,"prob rows, one entry per cancer type: likelihood = dna_combined, genomicPositionClassifier = gen_pos, snvPairwiseClassifier = snv96, featureClassifier = event.",array,6,all,none,
+cuppa.predictions[].altSjCohortClassifier,rna,,Alternative splice junction classifier probability.,number,1,none,none,Null without RNA data.
+cuppa.predictions[].expressionPairwiseClassifier,rna,,Gene expression classifier probability.,number,1,none,none,Null without RNA data.
+cuppa.bestPrediction,copy,cuppa.predictions,First entry: the highest dna_combined probability.,object,6,all,none,
+cuppa.bestPrediction.altSjCohortClassifier,rna,,Alternative splice junction classifier probability.,number,1,none,none,Null without RNA data.
+cuppa.bestPrediction.expressionPairwiseClassifier,rna,,Gene expression classifier probability.,number,1,none,none,Null without RNA data.
+cuppa.simpleDups32To200B,copy,cuppa/<T>.cuppa.vis_data.tsv,feat_value of feature sv.SIMPLE_DEL_20KB_1MB.,integer,1,all,none,The name does not match the content: it holds the number of simple deletions of 20 kb to 1 Mb.
+cuppa.maxComplexSize,copy,cuppa/<T>.cuppa.vis_data.tsv,feat_value of feature sv.MAX_COMPLEX_SIZE.,integer,1,all,none,
+cuppa.telomericSGLs,copy,cuppa/<T>.cuppa.vis_data.tsv,feat_value of feature sv.TELOMERIC_SGL.,integer,1,all,none,
+cuppa.LINECount,copy,cuppa/<T>.cuppa.vis_data.tsv,feat_value of feature sv.LINE.,integer,1,all,none,
+peach,copy,peach/<N>.peach.haplotypes.best.tsv,Rows of genes other than UGT1A1.,array,7,all,none,Null in tumor-only mode. ORANGE's code removes UGT1A1.
+peach[].haplotype,derived,haplotype and count,"Haplotype with zygosity, e.g. *1_HOM for count 2.",string,1,all,none,
+peach[].panelVersion,metadata,,Empty.,string,1,all,none,
+peach[].repoVersion,metadata,,Empty.,string,1,all,none,
+sigAllocations,copy,sigs/<T>.sig.allocation.tsv,All signatures.,array,4,all,none,Null in tumor-only mode.
+sigAllocations[].etiology,annotation,signature,ORANGE signature etiology table.,string,1,all,none,
+plots,plot,,Paths of the plot images used in the PDF.,object,12,all,all,

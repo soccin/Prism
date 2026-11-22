@@ -1,86 +1,131 @@
-# ORANGE JSON
+# ORANGE JSON: a secondary file
 
-ORANGE is the last step of oncoanalyser. For each sample it writes a PDF
-report and a JSON file, `orange/<T>.orange.json`, that combine the
-results of the other tools. This page describes the JSON as written by
-ORANGE 5.0.1 (oncoanalyser 3.0.0).
+ORANGE is the last step of oncoanalyser. For each sample it reads the
+output files of the other tools and writes a PDF report and a JSON
+file, `orange/<T>.orange.json`. It analyzes no sequencing data. The
+JSON holds no primary data: every value is a copy of a tool file
+value, a value derived from those by a fixed rule, a look-up, a run
+setting or a plot path.
 
-Field-level detail is in `tables/orange_fields.csv` (sheet
-`orange_fields` of `dbScheme.xlsx`); enum values are in
-`tables/orange_enums.csv`.
+This page is based on the ORANGE 5.0.1 source code (`orange/` and
+`orange-datamodel/` at tag `orange-v5.0.1`) and on the JSON files of all
+14 samples. Detail is in `tables/orange.csv` (sheet `orange` of
+`dbScheme.xlsx`). It has one row per JSON section, giving the source
+file and which records ORANGE keeps, and one row per value ORANGE
+computes.
 
-## Where the structure comes from
+## Where each section comes from
 
-The JSON has no published field documentation. Its structure is defined
-by the Java classes in `orange-datamodel/` of the hmftools repo, and
-the ORANGE README sends readers to each tool's own documentation. The
-field table is therefore built in two parts:
+| JSON section | Source file | Records kept |
+|---|---|---|
+| `purple.fit` | `purple.purity.tsv`, `purple.qc` | |
+| `purple.characteristics` | `purple.purity.tsv`, `purple.qc` | |
+| `purple.somaticDrivers` | `purple.driver.catalog.somatic.tsv` | entries not NOT_REPORTED |
+| `purple.germlineDrivers` | `purple.driver.catalog.germline.tsv` | entries not NOT_REPORTED |
+| `purple.somaticVariants` | `purple.somatic.vcf.gz` | PASS records with the REPORTED flag |
+| `purple.germlineVariants` | `purple.germline.vcf.gz` | records with the REPORTED flag |
+| `purple.somaticGainsDels` | somatic driver catalog + `purple.cnv.gene.tsv` + `purple.chromosome_arm.tsv` | AMP, PARTIAL_AMP, DEL, HET_DEL, LOH driver entries |
+| `purple.germlineGainsDels` | germline driver catalog + `purple.germline_amp_del.tsv` | REPORTED GERMLINE_DELETION and GERMLINE_AMP entries |
+| `purple.armCopyNumberAbberations` | `purple.chromosome_arm.tsv` + ploidy and sex | arms called GAIN or LOSS by ORANGE |
+| `linx.fusions` | `linx.fusion.tsv` + `linx.breakend.tsv` + `linx.svs.tsv` | reported = true |
+| `linx.somaticBreakends` | `linx.breakend.tsv` + `linx.svs.tsv` + `linx.driver.catalog.tsv` | reportedStatus = REPORTED |
+| `linx.germlineBreakends` | the germline LINX files | reportedStatus = REPORTED |
+| `lilac` | `lilac.tsv`, status from `lilac.qc.tsv` | all alleles |
+| `virusInterpreter` | `virus.annotated.tsv` | not blacklisted; `reportableViruses`: also reported = true |
+| `chord` | `chord.prediction.tsv` | |
+| `cuppa` | `cuppa.vis_data.tsv` (not `pred_summ.tsv`) | probability rows, 4 SV feature values |
+| `peach` | `peach.haplotypes.best.tsv` | genes other than UGT1A1 |
+| `sigAllocations` | `sig.allocation.tsv` | all |
 
-- Structure (paths, types, nullable, enums) parsed from the data model
-  at tag `orange-v5.0.1` and checked against real JSON files. Every key
-  found in the files is in the data model.
-- Descriptions and source columns written by hand from the tool
-  READMEs, by matching each ORANGE field to the tool file column with
-  the same value.
+The selection of records is the tools' own: ORANGE keeps the records
+the tool files already flag as reported. In all 14 samples, the number
+of somatic variants, somatic drivers, fusions, somatic breakends and
+viruses in the JSON equals the number of flagged records in the tool
+files. The somatic variant list holds 1 to 30 variants per sample,
+under 0.1% of the PASS records in the VCF.
 
-ORANGE 5.0.1 has 447 JSON paths: 121 in Group A, 145 somatic event
-(Group B), 115 germline (Group C), 54 RNA, 12 plot paths. Descriptions
-exist for Group A and for the top-level containers; Groups B and C are
-not yet described.
+## What ORANGE adds
 
-## Top-level structure
+Nothing measured. These values are in no tool file, but each follows
+from tool file values by a fixed rule or a look-up table:
 
-| Key | Group | Holds | Tumor-only |
-|---|---|---|---|
-| `sampleId`, `referenceId` | A | Tumor and normal sample IDs | `referenceId` is null; ORANGE uses that to mark tumor-only mode |
-| `samplingDate`, `experimentType`, `refGenomeVersion`, `pipelineVersion`, `configuredPrimaryTumor` | A | Run metadata. `samplingDate` is the run date; `configuredPrimaryTumor` is empty | same |
-| `purple.fit` | A | Purity, ploidy, fit method, PURPLE QC (status, contamination, segments, deleted genes, AMBER depth, germline aberrations) | filled |
-| `purple.characteristics` | A | WGD, MSI, TMB, TML, SV burden, LOH proportion | filled |
-| `purple.somaticDrivers`, `somaticVariants`, `somaticGainsDels`, `armCopyNumberAbberations` | B | Somatic drivers, SNVs and indels, gene gains and deletions, arm changes | filled |
-| `purple.germlineDrivers`, `germlineVariants`, `germlineGainsDels` | C | Germline drivers, variants, gene amplifications and deletions | null |
-| `linx.fusions`, `linx.somaticBreakends` | B | Fusions and somatic breakends in genes | filled |
-| `linx.germlineBreakends` | C | Germline breakends in genes | null |
-| `lilac.alleles[]` | A | HLA alleles (class I and II) with fragment counts, copy number, somatic mutation counts, QC status | filled; `refFragments` null |
-| `immuneEscape` | A | Six immune escape flags computed by ORANGE | filled |
-| `virusInterpreter` | A | All detected viruses, and the reported ones | filled |
-| `chord` | A | HRD probabilities and status | null |
-| `cuppa` | A | Tissue of origin: every cancer type with each classifier's probability, the best call, four SV feature counts | null |
-| `peach[]` | A | Pharmacogenomic haplotypes | null |
-| `sigAllocations[]` | A | Mutational signature allocations with etiology | null |
-| `isofox` | RNA | RNA results | null (no RNA data) |
-| `plots` | display | Paths of the plot images in the PDF | filled |
+- **Immune escape** (`immuneEscape`, 6 flags). True if a gene of a fixed
+  list is hit:
+  - deleted (a DEL entry in `somaticGainsDels`);
+  - homozygously disrupted (a somatic breakend with undisrupted copy
+    number below 0.5);
+  - amplified, for the PD-L1 and SETDB1 flags (an AMP entry);
+  - for HLA, also any LOH, DEL or HET_DEL driver.
 
-## Facts that matter for aggregation
+  Small variants are not tested.
+- **Arm gain and loss** (`purple.armCopyNumberAbberations`): arms whose
+  mean copy number is above or below a threshold of the expected
+  ploidy, with type, relative copy number and a driver interpretation.
+- **Driver interpretation** on drivers and gains/deletions: HIGH
+  (likelihood 0.8 or more), MEDIUM (0.2 or more), LOW.
+- **Gains/deletions:** `geneRange` (FULL or PARTIAL). Germline gains and
+  deletions: the minimum and maximum copy number over the gene's rows.
+- **Fusions:** `contextUp` and `contextDown` (text such as "Exon 3"),
+  `junctionCopyNumber` (mean of the SV junction copy number estimates).
+- **Breakends:** `junctionCopyNumber` (mean of min and max) and
+  `chromosomeBand` (cytoband look-up).
+- **Variants:** `localPhaseSets` (phase set IDs shared with another
+  listed variant within 1000 bases), `otherImpacts`, `reported`.
+- **Signatures:** `etiology` (look-up table).
+- **PEACH:** `haplotype` (haplotype with zygosity, such as `*1_HOM`).
+- **CUPPA:** `mode` (WGS or WGTS).
+- **Run settings:** `samplingDate` (the run date), `experimentType`,
+  `refGenomeVersion`, `pipelineVersion`.
+- **Plot file paths.**
 
-1. **The event lists are selections.** `purple.somaticVariants`,
-   `somaticGainsDels`, `linx.somaticBreakends` and `linx.fusions` hold
-   far fewer entries than the tool files: `somaticVariants` held under
-   0.1% of the passing records of `purple.somatic.vcf.gz` in every
-   sample checked, even though the ORANGE README says the JSON holds
-   every mutation. ORANGE cannot be the source of the Group B event
-   tables.
-2. **ORANGE does not hold all of Group A.** See `group_a.md`: 75 of the
-   202 Group A file fields have an ORANGE equivalent. BAM metrics,
-   telomere length, immune receptor loci, the QSEE status table and the
-   PURPLE sex call are missing.
-3. **Tumor-only samples** have `referenceId`, `chord`, `cuppa`, `peach`,
-   `sigAllocations` and all germline lists null. The tools that would
-   fill them need a matched normal.
-4. **PEACH is cut down.** ORANGE keeps only DPYD; PEACH also calls
-   UGT1A1 (in all matched samples checked).
-5. **Some JSON keys differ from the data model names**, set by
-   `@SerializedName`: `chord.BRCA1Value`, `chord.BRCA2Value`,
-   `cuppa.LINECount`. The key `purple.armCopyNumberAbberations` is
-   misspelled in ORANGE.
-6. **Misleading names.** `purple.characteristics.lohPercentage` and
-   `sigAllocations[].percent` hold fractions (0 to 1).
-7. **Computed field in the JSON.** `purple.somaticVariants[].reported`
-   is computed by the data model (true if any transcript impact is
-   reported) and is written to the JSON.
-8. **No BAM metrics.** The data model still has classes for BAM metrics
-   and flagstat (`OrangeSample`, `WGSMetrics`, `Flagstat`), but the
-   ORANGE record no longer refers to them, so the JSON has none.
-9. **ORANGE adds a few values not in the Group A files:** the immune
-   escape flags, signature etiology, the full CUPPA prediction list
-   (the tool's summary file keeps the top 3 per classifier), and four
-   CUPPA SV feature counts taken from `cuppa_data.tsv.gz`.
+## What ORANGE leaves out
+
+- **Records not flagged as reported:** over 99.9% of the somatic
+  variants, NOT_REPORTED driver candidates, non-reported fusions and
+  breakends, blacklisted viruses.
+- **PEACH UGT1A1:** ORANGE's code removes it.
+- **Whole files:** bam-tools metrics, TEAL, CIDER, the QSEE table, PEACH
+  QC, AMBER QC except contamination, the VIRUSBreakend detection
+  columns.
+- **Single fields:**
+  - PURPLE `gender`, `AmberGender` and `CobaltGender`: ORANGE has no
+    sex call.
+  - CHORD remarks.
+  - LILAC unique, shared and wildcard fragment counts.
+  - Virus `taxid`.
+  - CUPPA feature contributions and signature quantiles.
+
+## Errors in ORANGE 5.0.1
+
+Found in the source code and confirmed in the JSON files:
+
+1. `cuppa.simpleDups32To200B` holds the CUPPA feature
+   `sv.SIMPLE_DEL_20KB_1MB`: the number of simple deletions of 20 kb to
+   1 Mb, not duplications of 32 to 200 bases.
+2. The antigen presentation escape list has `TABBP`, which is not a
+   gene symbol; `TAPBP` is never tested.
+3. `purple.somaticGainsDels[].geneRange` is FULL only for AMP; every
+   other type, including a whole-gene deletion, is labeled PARTIAL.
+4. In `otherImpacts`, the codon, exon, splice region and coding effect
+   are copied from the canonical transcript, not taken from the other
+   transcript. The list is empty in every sample here.
+5. `purple.armCopyNumberAbberations` selects arms by mean copy number
+   but reports the median in `copyNumber`. The key is misspelled.
+6. `pipelineVersion` is ORANGE's default value (`OA_V3_0`); ORANGE reads
+   the pipeline version file but does not use it.
+
+Misleading names: `samplingDate` holds the date ORANGE ran;
+`purple.characteristics.lohPercentage` holds
+a fraction (0 to 1), rounded to 3 significant digits.
+
+## For post-processing
+
+Read the tool files listed above, not the JSON. ORANGE is needed only
+for the immune escape flags, and those can be recomputed from the
+PURPLE driver catalog, gene copy numbers and LINX breakends using the
+rules above. The tool files give the selection back through their own
+flags (REPORTED in the VCF, `reportedStatus`, `reported`).
+
+Tumor-only samples have `referenceId`, `chord`, `cuppa`, `peach`,
+`sigAllocations` and all germline sections null, because the tools
+that fill them need a matched normal.

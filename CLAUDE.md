@@ -31,6 +31,9 @@ sbatch ./Prism/runOncoanalyser.sh INPUT.csv [WORK_DIR]  # as a SLURM job
 ./Prism/deliverLocal.sh [OUT_DIR] [RESULTS_DIR]         # hard link reports into results/{PDF,HTML,PNG}
 sbatch ./Prism/qcCohort.sh [OUT_DIR]                    # QSEE over all groups into res/prism/qc/hmf/
 sbatch ./Prism/cohortReport.sh [-m MANIFEST] [-g GENES] [OUT_DIR]  # cohort report into res/prism/cohort/
+./Prism/scripts/fetchTracks.sh [TRACK_DIR]              # once per site: region tracks for postOA.sh (login node, downloads only)
+sbatch ./Prism/postOA.sh [-t TRACK_DIR] [OUT_DIR]       # cohort tables into res/prism/db/: stacked LINX tables, SV event table
+Rscript --vanilla Prism/docs/scripts/checkLinx.R [OUT_DIR]  # recheck the LINX rows of docs/ACTUAL_METHODS.md
 Rscript Prism/docs/dbScheme/scripts/fetchOrangeDatamodel.R orange-v5.0.1 DATAMODEL_DIR  # ORANGE data model sources
 Rscript Prism/docs/dbScheme/scripts/buildScheme.R --datamodel DATAMODEL_DIR --out-dir out  # rebuild docs/dbScheme tables
 ```
@@ -43,13 +46,44 @@ files; tool READMEs are not trusted. Keep its status labels
 `docs/dbScheme/` records, field by field, which output file first holds
 each per-sample value (role primary) and which files only copy or
 derive it (ORANGE, QSEE, CUPPA `pred_summ`, Virus Interpreter), as the
-basis for the planned post-processing (cohort aggregation) step.
+basis for the cohort aggregation (`postOA.sh`).
 `curated/` is edited by hand; `tables/` and `dbScheme.xlsx` are
 generated from it, the ORANGE data model and a finished `out/`. What
 ORANGE computes is in its source code, not its data model; read
 `orange/src/main/java/` again on an ORANGE upgrade. Prism is public:
 the generated tables hold only all/some/none and counts, never sample
 names or values.
+
+`postOA.sh` has two steps, both writing to `res/prism/db/`. Rule for
+both (user decision): do not infer biology; faithfully preserve what is
+there. No record is removed and every field a tool wrote is kept;
+anything added is a documented extra column, and a confidence tier may
+only be a column, never a filter.
+
+1. `scripts/postOA.R` stacks each per-sample table of every group into
+   `data/<tool>_<mode>_<table>.tsv.gz` with `group_id` and `sample_id`
+   in front. It copies lines as the tool wrote them (no parsing, no
+   filtering, no reformatting) and stops on a missing file, a header
+   that differs between samples, or a line with a different number of
+   fields than its header. Each table has a row in `linx_tables`
+   (description, source path), from which `manifest.tsv` is written;
+   change the description there when a table or its checked behavior
+   changes.
+2. `scripts/svCohort.R` writes `sv_cohort_filtered.tsv.gz`: one row per
+   event of PURPLE's somatic `purple.sv.vcf.gz` (all FILTER values),
+   with every VCF INFO/FORMAT field, every ESVEE `breakend.tsv` column
+   (joined on VCF ID = ESVEE `Id`), the LINX tables of step 1 (joined on
+   `vcfIdStart`; per-transcript, fusion, link and driver rows joined
+   with `|`), region tracks from `scripts/fetchTracks.sh`, and the same
+   breakends in other groups' PURPLE somatic, PURPLE germline and ESVEE
+   unfiltered calls. It writes `sv_cohort_filtered.columns.tsv` (every
+   column with its description, from the VCF header where there is
+   one) and adds both files to `manifest.tsv`. It stops if the events
+   do not account for every VCF record, LINX SV row and LINX breakend
+   row, or if an ESVEE row does not match its VCF record. GenomicRanges
+   is called through its namespace; attaching it masks `fs::path` and
+   dplyr verbs. A new column needs a branch in `describe()`; the run
+   warns about a column without a description.
 
 Post-pipeline layout (user decision): deliverables go under
 `res/prism/` in the folder that holds `out/` (the project folder), with
@@ -66,9 +100,9 @@ samplesheet.
 Checks after a change (there is no test suite):
 
 ```
-bash -n Prism/runOncoanalyser.sh Prism/deliverLocal.sh Prism/qcCohort.sh Prism/cohortReport.sh Prism/docs/scripts/countVcfFilters.sh
-shellcheck -x Prism/runOncoanalyser.sh Prism/00.SETUP.sh Prism/deliverLocal.sh Prism/qcCohort.sh Prism/cohortReport.sh Prism/docs/scripts/countVcfFilters.sh
-Rscript --vanilla -e "invisible(parse('Prism/scripts/cohortReport.R'))"
+bash -n Prism/runOncoanalyser.sh Prism/deliverLocal.sh Prism/qcCohort.sh Prism/cohortReport.sh Prism/postOA.sh Prism/scripts/fetchTracks.sh Prism/docs/scripts/countVcfFilters.sh
+shellcheck -x Prism/runOncoanalyser.sh Prism/00.SETUP.sh Prism/deliverLocal.sh Prism/qcCohort.sh Prism/cohortReport.sh Prism/postOA.sh Prism/scripts/fetchTracks.sh Prism/docs/scripts/countVcfFilters.sh
+Rscript --vanilla -e "for (f in c('Prism/scripts/cohortReport.R', 'Prism/scripts/postOA.R', 'Prism/scripts/svCohort.R', 'Prism/docs/scripts/checkLinx.R')) invisible(parse(f))"
 Rscript --vanilla -e "for (f in Sys.glob('Prism/docs/dbScheme/scripts/*.R')) invisible(parse(f))"
 Prism/bin/nextflow lint Prism/conf/iris.config
 Prism/bin/nextflow -c Prism/conf/iris.config config -flat
@@ -101,7 +135,7 @@ Do not start a pipeline run or submit a job unless the user asks.
    by the user's `~/bin/sbatch` wrapper), and the `Command=` path from
    `scontrol show job`. A candidate is accepted only if it holds
    `conf/iris.config`. If that file is renamed, update `is_prism_dir`
-   (copied in `qcCohort.sh`).
+   (copied in `qcCohort.sh`, `cohortReport.sh` and `postOA.sh`).
 2. Sources `conf/ENV.sh`, which sets `NXF_VER`, `NXF_HOME`, a new
    timestamped `NXF_WORK`, the Singularity cache and `NXF_OPTS`.
 3. Makes a temp folder with `mktemp` under
@@ -127,8 +161,9 @@ Values that must stay in agreement across files:
 - The Singularity cache path is in `conf/ENV.sh` (three variables) and
   in `singularity.cacheDir` in `conf/iris.config`.
 - The temp root `/localscratch/soccin/oncoanalyser` is in
-  `runOncoanalyser.sh`, `00.SETUP.sh`, `qcCohort.sh`, and twice in
-  `conf/iris.config` (`beforeScript` and `runOptions`).
+  `runOncoanalyser.sh`, `00.SETUP.sh`, `qcCohort.sh`, `cohortReport.sh`,
+  `postOA.sh`, and twice in `conf/iris.config` (`beforeScript` and
+  `runOptions`).
 - The pipeline version 3.0.0 is in `-revision` in `runOncoanalyser.sh`
   and in the reference path in `conf/genome_GRCh38_hmf.config`.
 - `qcCohort.sh` uses the QSEE image of oncoanalyser 3.0.0

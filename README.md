@@ -106,13 +106,55 @@ All commands are run from the project folder.
    `fs` and `openxlsx`. A rerun replaces the workbooks, the CSVs and,
    without `-g`, the default gene list.
 
+6. Build the cohort tables, as a SLURM job or on a compute node. Once
+   per site, download the region tracks first (login node, downloads
+   only):
+
+   ```
+   ./Prism/scripts/fetchTracks.sh [TRACK_DIR]
+   sbatch ./Prism/postOA.sh [-t TRACK_DIR] [OUT_DIR]
+   ```
+
+   `fetchTracks.sh` writes GIAB v3.6 GRCh38 stratifications (mappability,
+   segmental duplications, tandem repeats, satellites, GC extremes, gaps
+   and other difficult regions), the ENCODE blacklist v2 and UCSC
+   RepeatMasker and centromeres to `TRACK_DIR`, with
+   `TRACK_DIR/tracks.tsv` (source URL, date, md5, GIAB md5 check).
+
+   `postOA.sh` writes to `res/prism/db/`:
+   - `data/linx_*.tsv.gz`: each per-sample LINX table of every group
+     stacked into one table, with `group_id` and `sample_id` in front.
+     Lines are copied as LINX wrote them. Somatic `svs`, `clusters`,
+     `links`, `breakend`, `fusion`, `drivers` and `driver_catalog` for
+     every group; germline `svs`, `breakend`, `disruption`, `clusters`,
+     `links` and `driver_catalog` for groups with a matched normal.
+   - `sv_cohort_filtered.tsv.gz`: one row per somatic SV event: every
+     record of PURPLE's `purple.sv.vcf.gz` (all FILTER values; nothing
+     left out). Each event has every field PURPLE (VCF INFO and FORMAT
+     of tumor and normal), ESVEE (`breakend.tsv`) and LINX (SV, cluster,
+     breakends per transcript, fusions, links, cluster drivers) wrote
+     for it, the region tracks at each breakend, and whether the same
+     breakend or pair is in other groups' calls. Values are copied, not
+     interpreted.
+   - `sv_cohort_filtered.columns.tsv`: the source and description of
+     every column of that table, and its number of non-empty values.
+   - `manifest.tsv` (what each file holds, where it comes from, its
+     groups and rows), `samples.tsv` (tumor, normal, run mode and LINX
+     version per group) and `rows_per_sample.tsv`.
+
+   It stops if a file is missing, if the files of a table do not match,
+   or if the SV events do not account for every PURPLE record and LINX
+   row. It needs `Rscript` with `tidyverse`, `fs` and the Bioconductor
+   packages `GenomicRanges`, `IRanges` and `S4Vectors`. A rerun
+   replaces the files.
+
 Outputs go to the project folder, not to `Prism/`:
 
 - `out/`: pipeline results (`outdir` in `conf/params.yaml`)
 - `res/prism/`: deliverables made after the pipeline from `out/`
   (`res/prism/qc/hmf/` from `qcCohort.sh`, `res/prism/cohort/` from
-  `cohortReport.sh`); their logs go to
-  `out/logs/other/`
+  `cohortReport.sh`, `res/prism/db/` from `postOA.sh`); their logs
+  go to `out/logs/other/`
 - `oncoanalyser.<jobid>.out`: head job log (sbatch only)
 - `.nextflow.log`, `.nextflow/`: Nextflow log and run history
 
@@ -157,6 +199,7 @@ Prism/
   deliverLocal.sh       hard links the reports from out/ into results/
   qcCohort.sh           QSEE over all groups, into res/prism/qc/hmf/
   cohortReport.sh       cohort report, into res/prism/cohort/
+  postOA.sh             cohort tables (stacked LINX tables, SV event table), into res/prism/db/
   00.SETUP.sh           one-time setup: installs Nextflow into bin/
   bin/                  nextflow (installed by 00.SETUP.sh, not tracked)
   conf/
@@ -167,6 +210,9 @@ Prism/
   scripts/
     makeOncoanalyserInput.R  builds the samplesheet
     cohortReport.R           builds the cohort report (run by cohortReport.sh)
+    postOA.R                 stacks the LINX tables (run by postOA.sh)
+    svCohort.R               builds the SV event table (run by postOA.sh)
+    fetchTracks.sh           downloads the region tracks postOA.sh uses
   examples/             templates for mapping.csv and manifest.csv
   docs/                 pipeline instructions and notes
     dbScheme/           which file holds each per-sample value
@@ -197,6 +243,8 @@ The paths are specific to IRIS and to user `soccin`:
   `/scratch/core002/nds/nf-core/reference_data/3.0.0`
 - `runOncoanalyser.sh`: partition `cmobic_cpu`, QOS `priority`, head job temp folder
   under `/localscratch/soccin/oncoanalyser`
+- `postOA.sh` and `scripts/fetchTracks.sh`: region tracks under
+  `/scratch/core001/bic/socci/reference/prism_tracks/GRCh38`
 
 No job writes to a node's `/tmp`. The temp folders on `/localscratch`
 are not removed automatically.
@@ -211,11 +259,14 @@ are not removed automatically.
 - `docs/ACTUAL_METHODS.md`: what the pipeline actually does at each
   step, checked against the code and the run's own logs and files,
   where it differs from the tool READMEs, and how to check it again
-  (`docs/scripts/countVcfFilters.sh`)
+  (`docs/scripts/countVcfFilters.sh`, `docs/scripts/checkLinx.R`)
+- `docs/LINX_tables.md`: why LINX writes seven somatic SV tables,
+  what one row of each is, how they link, and R examples on the
+  `res/prism/db` tables
 - `docs/OA_AlgoKey.md`: what each Hartwig tool name (PURPLE, AMBER,
   ...) means in plain words
 - `docs/dbScheme/`: which output file first holds each per-sample
   value (primary) and which files only copy it (ORANGE, QSEE), field by
-  field, as the basis for cohort tables (planned post-processing step).
+  field, as the basis for the cohort tables (`postOA.sh`).
   Covers the per-sample summary files and the ORANGE JSON so far; see
   its `README.md` for the files and how to rebuild them.

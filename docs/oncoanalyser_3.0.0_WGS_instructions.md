@@ -619,6 +619,98 @@ The log `cohortReport.<jobid>.out` is moved to `OUT_DIR/logs/other/`
 at the end of the job. A rerun replaces the workbooks and the CSVs. The
 job asks for 2 CPUs, 16 GB and 1 hour; 14 groups took under a minute.
 
+To build the cohort tables (download the region tracks once per site
+first, on the login node):
+
+```bash
+./Prism/scripts/fetchTracks.sh [TRACK_DIR]
+sbatch ./Prism/postOA.sh [-t TRACK_DIR] [OUT_DIR]
+```
+
+`TRACK_DIR` defaults to
+`/scratch/core001/bic/socci/reference/prism_tracks/GRCh38`.
+`fetchTracks.sh` downloads GIAB genome stratifications v3.6 for GRCh38
+(the unions of all difficult regions and of low mappability and
+segmental duplications; low mappability; segmental duplications; tandem
+repeats and homopolymers; satellites; GC below 25% or above 65%; gaps;
+other difficult regions and each of its parts: false and collapsed
+duplications, population CNV false-positive regions, L1H, VDJ, MHC,
+KIR), the ENCODE blacklist v2, and UCSC RepeatMasker and centromeres.
+Each goes into its own folder; `TRACK_DIR/tracks.tsv` lists the source
+URL, download date and md5 of each, and the check of each GIAB file
+against the GIAB md5 list.
+
+`postOA.sh` runs two R scripts (`Rscript --vanilla`; packages
+`tidyverse`, `fs`, and for the second `GenomicRanges`, `IRanges`,
+`S4Vectors`). Both follow one rule: do not infer biology; faithfully
+preserve what is there.
+
+`scripts/postOA.R`: for each kind of table it stacks the files of all
+groups into one `.tsv.gz` in `res/prism/db/data/`, with `group_id`
+and `sample_id` in front. The lines are copied as the tool wrote them:
+no row is left out and no value is changed or reformatted. So far it
+covers the LINX tables:
+
+- somatic, every group: `svs`, `clusters`, `links`, `breakend`,
+  `fusion`, `drivers`, `driver_catalog`
+  (`linx/somatic_annotations/<sample_id>.linx.<table>.tsv`)
+- germline, groups with a matched normal: `svs`, `breakend`,
+  `disruption`, `clusters`, `links`, `driver_catalog`
+  (`linx/germline_annotations/<sample_id>.linx.germline.<table>.tsv`)
+
+LINX's `neoepitope` (input to NEO) and `vis_*` (input to the LINX
+plots) files are not aggregated. Which SVs LINX reads from PURPLE, and
+how its tables link to each other, is in `docs/ACTUAL_METHODS.md`
+(section 4, LINX) and in the descriptions in `manifest.tsv`. The script
+stops if a file is missing; it stops, and writes no further table, if
+the files of a table have different headers or a line has a different
+number of fields than its header. At the top of `res/prism/db/`:
+
+- `manifest.tsv`: each file, its tool and mode, the number of groups
+  and rows, the source path and what it holds
+- `samples.tsv`: per group, `sample_id` (the tumor, named by the PURPLE
+  purity file), `normal_id` (the other sample folder in `bamtools/`),
+  `run_mode` (PURPLE) and the LINX version
+- `rows_per_sample.tsv`: the rows each group adds to each table
+
+`scripts/svCohort.R` writes `res/prism/db/sv_cohort_filtered.tsv.gz`,
+one row per somatic SV event:
+
+- Rows: every record of each group's PURPLE `purple.sv.vcf.gz` (FILTER
+  PASS, PON and INFERRED; nothing is left out). The two breakends of an
+  SV (linked by `MATEID`) form one row, with the first in the VCF as the
+  start; a single or inferred breakend forms one row. The script stops
+  unless the events account for every VCF record.
+- Per breakend (`start_*`, `end_*`): the VCF fields, every INFO key
+  (`info_*`) and the FORMAT values of tumor and normal (`tumor_*`,
+  `normal_*`); every column of ESVEE's `esvee/<sample_id>.esvee.breakend.tsv`
+  (`esvee_bnd_*`, joined on VCF ID = ESVEE `Id`; inferred breakends
+  have none); LINX's `breakend.tsv` rows for that end, one value per
+  transcript joined with `|` (`linx_bnd_*`); each region track
+  (`region_*`: in the track or not, RepeatMasker name, class and family,
+  ENCODE blacklist label, distance to the centromere model, Hartwig
+  `sv_prep_blacklist` and `unmap_regions`); the number and list of
+  other groups with a breakend at the same position, or within 50 bases,
+  with the same orientation, in their PURPLE somatic, PURPLE germline
+  and ESVEE unfiltered calls (`xs_*`), and the same in the group's own
+  germline file (`own_germline_*`).
+- Per event: the LINX `svs.tsv` row (`linx_*`, joined on `vcfIdStart`),
+  its cluster (`linx_cluster_*`), fusions, links and cluster drivers
+  (joined with `|`), whether the same two-breakend event is in other
+  groups (`xs_pair_*`), and derived columns (`n_breakends`, `in_linx`,
+  `same_chrom`, `length`, coordinates). For some SVs whose two
+  breakends share a position, LINX's start is the VCF end
+  (`linx_start_is_vcf_start` FALSE); LINX's columns are kept as LINX
+  wrote them.
+
+`res/prism/db/sv_cohort_filtered.columns.tsv` describes every column
+(from the VCF header where it has one) with its number of non-empty
+values. Both files are added to `manifest.tsv`.
+
+The log `postOA.<jobid>.out` is moved to `OUT_DIR/logs/other/` at the
+end of the job. A rerun replaces the files. The job asks for 2 CPUs,
+32 GB and 1 hour.
+
 ## 8. Optional controls
 
 - Skip tools: `--processes_exclude virusinterpreter,orange`

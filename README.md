@@ -169,6 +169,7 @@ Prism/
     cohortReport.R           builds the cohort report (run by cohortReport.sh)
   examples/             templates for mapping.csv and manifest.csv
   docs/                 pipeline instructions and notes
+    dbScheme/           which file holds each per-sample value
 ```
 
 ## How the run script finds the Prism folder
@@ -207,3 +208,14 @@ are not removed automatically.
 - `docs/NF_SCRIPTING_INFO.md`: rules for writing Nextflow run scripts
   and configs on IRIS, and lessons from building Prism. Copy it into
   the next pipeline's wrapper repo.
+- `docs/ACTUAL_METHODS.md`: what the pipeline actually does at each
+  step, checked against the code and the run's own logs and files,
+  where it differs from the tool READMEs, and how to check it again
+  (`docs/scripts/countVcfFilters.sh`)
+- `docs/OA_AlgoKey.md`: what each Hartwig tool name (PURPLE, AMBER,
+  ...) means in plain words
+- `docs/dbScheme/`: which output file first holds each per-sample
+  value (primary) and which files only copy it (ORANGE, QSEE), field by
+  field, as the basis for cohort tables (planned post-processing step).
+  Covers the per-sample summary files and the ORANGE JSON so far; see
+  its `README.md` for the files and how to rebuild them.

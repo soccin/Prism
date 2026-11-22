@@ -305,7 +305,7 @@ What it sets:
 - `executor { queueSize = 200; submitRateLimit = '10 sec' }`. At 50,
   alignment used about half of `cmobic_cpu`, which fits about 91
   12-CPU tasks; 200 fills it, and the rest wait in SLURM with QOS
-  `priority`.
+  `priority`. Not yet tested at 200 (see `ISSUES.md`).
 - Singularity enabled, `autoMounts`, `cacheDir` on shared storage,
   `pullTimeout = '2h'`.
 - No writes to the node's `/tmp`. Each task (one SLURM job) gets its
@@ -354,12 +354,21 @@ Notes:
   reads was still killed with 144 GB and passed with 216 GB. Groups
   with few chimeric reads finished ESVEE in 10 to 75 min, so the larger
   request costs little for them. 24 CPUs ran ESVEE prep 1.4 to 2 times
-  faster than 12; 36 was no faster than 24.
-- `MaxRSS` (sacct) and `peak_rss` (trace) do not show how much memory
-  a Java tool needs: the module sets the heap to 95% of the request,
-  and the heap fills up to it.
+  faster than 12; 36 was no faster than 24. A resume with the current
+  settings (2026-11-18) ran the other large group (601 M chimeric
+  reads, 918 M prep BAM records) on 24 CPUs / 216 GB: passed on
+  attempt 1 in 3h56m, with no slowdown from a full heap. A group
+  larger than these may still be killed at the sort on 216 GB; it is
+  then retried on 432 GB.
+- `MaxRSS` (sacct) equals the request for every task that reads and
+  writes a lot of data, Java or not: also for alignment (bwa-mem2 and
+  sambamba, trace `peak_rss` 24 to 29 GB of 72), AMBER, COBALT and
+  BAMTOOLS. Do not size from it. The trace's `peak_rss` is usable,
+  except for Java tools whose heap fills to the request (SAGE) and for
+  ESVEE, where it is above the request.
 - SAGE somatic used 97% of 12 CPUs for 1 to 5.3 h. The gain from
-  24 CPUs is expected but not yet measured.
+  24 CPUs is expected but not yet measured: every SAGE somatic task
+  was cached in the 2026-11-18 resume. See `ISSUES.md`.
 - ESVEE asks for 32 CPUs / 96 GB in Hartwig's settings. That is less
   memory than the 144 GB on which the group above was still killed.
 - The docs' retry example uses `check_max(...)`, an old nf-core

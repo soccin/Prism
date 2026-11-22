@@ -1,0 +1,24 @@
+tool,file,layout,role,detail,matched_only,holds,notes
+PURPLE,purple/<T>.purple.purity.tsv,wide,primary,fields,no,"Purity and ploidy fit, sex, fit method, WGD, MSI, TMB, TML, SV burden, run mode",The fit columns equal row 1 of purple.purity.range.tsv.
+PURPLE,purple/<T>.purple.qc,key-value,primary,fields,no,"QC status, copy number segments, sex from AMBER and from COBALT data, deleted genes, germline aberrations, AMBER mean depth, LOH fraction, TINC level","Purity, Method and Contamination are copies."
+PURPLE,purple/<T>.purple.purity.range.tsv,wide,primary,none,no,Every candidate purity and ploidy fit with its score (one row per candidate),Row 1 is the chosen fit. A distribution (group D); not described field by field.
+AMBER,amber/<T>.amber.qc,key-value,primary,fields,no,"QC status, contamination, consanguinity, uniparental disomy",
+COBALT,cobalt/<S>.cobalt.gc.median.tsv,other,primary,none,no,"Mean and median read depth, and median depth per GC bucket",TEAL copies two of its values. A distribution (group D); not described field by field.
+bam-tools,bamtools/<S>/<S>.bam_metric.summary.tsv,wide,primary,fields,no,"Read counts, coverage mean, median and spread, excluded base fractions, fraction of bases at each depth",
+bam-tools,bamtools/<S>/<S>.bam_metric.flag_counts.tsv,flagstat,primary,fields,no,Read counts by flag (samtools flagstat text),Two of its 16 lines are copies of the summary.
+bam-tools,bamtools/<S>/<S>.bam_metric.coverage.tsv,wide,primary,none,no,Number of bases at each depth from 0 to 250,The summary's DepthCoverage_N are cumulative fractions of it. A distribution (group D); not described field by field.
+QSEE,qsee/<T>.qsee.status.tsv.gz,long,secondary,fields,no,QC verdict (PASS/WARN/FAIL) for 17 metrics,"Every metric value comes from bam-tools, AMBER or PURPLE. Only the verdict and its threshold are QSEE's own."
+QSEE,qsee/<T>.qsee.vis.data.tsv.gz,long,secondary,none,no,Data behind the QSEE plots,"Repackages bam-tools, COBALT, REDUX and ESVEE distributions."
+CHORD,chord/<T>.chord.prediction.tsv,wide,primary,fields,yes,HRD probabilities and status,
+SIGS,sigs/<T>.sig.allocation.tsv,long,primary,fields,yes,SNVs allocated to each mutational signature,
+CUPPA,cuppa/<T>.cuppa.vis_data.tsv,long,primary,fields,yes,"Probability of every cancer type for every classifier, EVENT feature contributions, signature quantiles","The full CUPPA result. ORANGE reads this file, not pred_summ."
+CUPPA,cuppa/<T>.cuppa.pred_summ.tsv,long,secondary,fields,yes,Top 3 cancer types per classifier,Every value is taken from cuppa.vis_data.tsv (checked in all matched samples).
+TEAL,teal/<S>.teal.tellength.tsv,wide,primary,fields,no,"Telomere length and telomeric fragment counts, per BAM","Purity, ploidy, duplicate fraction and two read depths are copies."
+LILAC,lilac/<T>.lilac.tsv,long,primary,fields,no,"HLA alleles with fragment counts, copy number and somatic variant counts",
+LILAC,lilac/<T>.lilac.qc.tsv,long,primary,fields,no,HLA typing QC per gene group,
+PEACH,peach/<N>.peach.haplotypes.best.tsv,long,primary,fields,yes,"Called haplotypes of DPYD and UGT1A1, with function and linked drugs",peach.haplotypes.all.tsv lists the candidate haplotype combinations and peach.events.tsv the variants PEACH used; not described field by field.
+PEACH,peach/<N>.peach.qc.tsv,long,primary,fields,yes,PEACH QC status per gene,
+VIRUSBreakend,virusbreakend/<T>.virusbreakend.vcf.summary.tsv,long,primary,fields,no,"Viruses detected: taxonomy, read counts, coverage, integrations, QC status",Virus Interpreter copies five of its columns.
+Virus Interpreter,virusinterpreter/<T>.virus.annotated.tsv,long,secondary,fields,no,Viruses detected with name and reporting decision,"Coverage, integrations and QC status are copies of the VIRUSBreakend summary. Its own columns are look-ups and rules."
+CIDER,cider/<T>.cider.locus_stats.tsv,long,primary,fields,no,Reads and VDJ sequences per IG and TCR locus,
+ORANGE,orange/<T>.orange.json,json,secondary,orange,no,"Per-sample summary of all tools: fit, QC, reported events, HLA, viruses, HRD, tissue of origin, haplotypes, signatures","Copies the reported records and summary values of the other tools. What ORANGE adds is listed in the orange sheet (role not copy)."

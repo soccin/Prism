@@ -5,22 +5,26 @@
 #
 # --datamodel   ORANGE data model sources, from fetchOrangeDatamodel.R.
 # --out-dir     A finished oncoanalyser output folder (one folder per
-#               group). Used to see which fields are filled in matched and
-#               tumor-only samples. Only all/some/none per field is
-#               written; no sample names and no values.
+#               group). Used to see which fields are present in matched and
+#               tumor-only samples and to check the copies. Only all/some/
+#               none and counts are written; no sample names, no values.
 # --scheme-dir  The folder with curated/; tables/ and dbScheme.xlsx are
 #               written there. Default: the parent of this script's folder.
 #
 # Inputs in curated/ (edited by hand):
-#   orange_descriptions.csv  description and source of ORANGE fields,
-#                            keyed by data model type and JSON key
-#   group_a_fields.csv       every field of the Group A (one value set per
-#                            sample) tool files, with its ORANGE path
+#   files.csv       one row per per-sample file: tool, role (primary or
+#                   secondary), what it holds
+#   fields.csv      every field of the files with detail "fields": role
+#                   (primary, copy, derived, annotation, key), description,
+#                   source of copies and derived values
+#   orange_map.csv  where each part of the ORANGE JSON comes from, and the
+#                   values ORANGE computes itself
 # Outputs:
-#   tables/orange_fields.csv  every ORANGE JSON path
-#   tables/orange_enums.csv   allowed values of the enum fields
-#   tables/group_a_fields.csv group_a_fields.csv plus checks against OUT
-#   dbScheme.xlsx             the three tables and a readme sheet
+#   tables/files.csv   files.csv plus field counts by role
+#   tables/fields.csv  fields.csv plus presence and the copy checks
+#   tables/orange.csv  orange_map.csv plus JSON type, fill status and the
+#                      number of JSON paths each row covers
+#   dbScheme.xlsx      the three tables and a readme sheet
 
 suppressPackageStartupMessages({
   library(tidyverse)
@@ -79,6 +83,53 @@ warn_msg <- function(...) {
   message("WARNING: ", str_glue(..., .envir = parent.frame()))
 }
 
+read_curated <- function(name) {
+  read_csv(
+    path(curated_dir, name),
+    col_types = cols(.default = col_character()), show_col_types = FALSE
+  )
+}
+
+FIELD_ROLES <- c("primary", "copy", "derived", "annotation", "key")
+FILE_ROLES <- c("primary", "secondary")
+MAP_ROLES <- c("copy", "derived", "annotation", "metadata", "plot", "rna")
+
+# ---- curated tables ----------------------------------------------------
+
+files <- read_curated("files.csv")
+fields <- read_curated("fields.csv")
+orange_map <- read_curated("orange_map.csv")
+
+bad <- files |> filter(!role %in% FILE_ROLES)
+if (nrow(bad) > 0) warn_msg("files.csv: bad role for {str_c(bad$file, collapse = ', ')}")
+bad <- fields |> filter(!role %in% FIELD_ROLES)
+if (nrow(bad) > 0) warn_msg("fields.csv: bad role for {str_c(bad$field, collapse = ', ')}")
+bad <- orange_map |> filter(!role %in% MAP_ROLES)
+if (nrow(bad) > 0) warn_msg("orange_map.csv: bad role for {str_c(bad$path, collapse = ', ')}")
+
+no_source <- fields |> filter(role %in% c("copy", "derived", "annotation"), is.na(source))
+if (nrow(no_source) > 0) {
+  warn_msg("fields.csv: no source for {str_c(no_source$field, collapse = ', ')}")
+}
+dup <- fields |> count(file, layout, field) |> filter(n > 1)
+if (nrow(dup) > 0) warn_msg("fields.csv: duplicate rows for {str_c(dup$field, collapse = ', ')}")
+
+detailed <- files |> filter(detail == "fields") |> pull(file)
+orphan <- setdiff(unique(fields$file), detailed)
+if (length(orphan) > 0) {
+  warn_msg("fields.csv files not marked detail = fields in files.csv: {str_c(orphan, collapse = ', ')}")
+}
+missing <- setdiff(detailed, fields$file)
+if (length(missing) > 0) warn_msg("No fields for: {str_c(missing, collapse = ', ')}")
+
+role_check <- fields |>
+  summarize(n_primary = sum(role == "primary"), .by = file) |>
+  inner_join(select(files, file, file_role = role), by = "file") |>
+  filter((file_role == "primary") != (n_primary > 0))
+if (nrow(role_check) > 0) {
+  warn_msg("File role does not match its field roles: {str_c(role_check$file, collapse = ', ')}")
+}
+
 # ---- data model --------------------------------------------------------
 
 NUMBER_TYPES <- c("double", "Double", "float", "Float")
@@ -103,13 +154,8 @@ strip_comments <- function(text) {
     str_remove_all(regex("//[^\n]*", multiline = TRUE))
 }
 
-parse_enum <- function(text) {
-  m <- str_match(text, regex("\\benum\\s+(\\w+)\\s*\\{(.*?)(?:;|\\})", dotall = TRUE))
-  values <- m[1, 3] |>
-    str_remove_all("\\([^)]*\\)") |>
-    str_split_1(",") |>
-    str_squish()
-  list(name = m[1, 2], values = values[values != ""])
+parse_enum_name <- function(text) {
+  str_match(text, "\\benum\\s+(\\w+)")[1, 2]
 }
 
 parse_interface <- function(text) {
@@ -119,24 +165,17 @@ parse_interface <- function(text) {
   )
   body <- m[1, 4]
   methods <- str_match_all(body, METHOD_RE)[[1]]
-  fields <- tibble(
-    annot = methods[, 2], java_type = methods[, 3], name = methods[, 4]
-  ) |>
+  fields <- tibble(annot = methods[, 2], java_type = methods[, 3], name = methods[, 4]) |>
     filter(!java_type %in% c("return", "new", "throw")) |>
-    mutate(
-      nullable = str_detect(annot, "@Nullable\\b"),
-      json_key = coalesce(str_match(annot, "@SerializedName\\(\"([^\"]+)\"\\)")[, 2], name),
-      derived = FALSE
-    )
+    mutate(json_key = coalesce(str_match(annot, "@SerializedName\\(\"([^\"]+)\"\\)")[, 2], name))
   derived <- str_match_all(body, DERIVED_RE)[[1]]
   if (nrow(derived) > 0) {
     fields <- bind_rows(fields, tibble(
-      annot = "", java_type = derived[, 2], name = derived[, 3],
-      nullable = FALSE, json_key = derived[, 3], derived = TRUE
+      annot = "", java_type = derived[, 2], name = derived[, 3], json_key = derived[, 3]
     ))
   }
   extends <- if (is.na(m[1, 3])) character() else m[1, 3] |> str_split_1(",") |> str_squish()
-  list(name = m[1, 2], extends = extends, fields = select(fields, -annot))
+  list(name = m[1, 2], extends = extends, fields = select(fields, java_type, json_key))
 }
 
 java_files <- dir_ls(model_dir, glob = "*.java")
@@ -144,11 +183,10 @@ if (length(java_files) == 0) {
   stop(str_glue("No .java files in {model_dir}"), call. = FALSE)
 }
 sources <- java_files |> map_chr(\(f) read_file(f) |> strip_comments())
-enums <- sources |>
+enum_names <- sources |>
   keep(\(s) str_detect(s, "\\bpublic\\s+enum\\s")) |>
-  map(parse_enum) |>
+  map_chr(parse_enum_name) |>
   unname()
-enums <- set_names(enums, map_chr(enums, "name"))
 types <- sources |>
   keep(\(s) str_detect(s, "\\bpublic\\s+interface\\s")) |>
   map(parse_interface) |>
@@ -159,7 +197,7 @@ model_tag <- if (file_exists(path(model_dir, "SOURCE.txt"))) {
 } else {
   "unknown"
 }
-log_msg("Data model {model_tag}: {length(types)} types, {length(enums)} enums")
+log_msg("Data model {model_tag}: {length(types)} types, {length(enum_names)} enums")
 
 all_fields <- function(type) {
   t <- types[[type]]
@@ -177,51 +215,38 @@ type_info <- function(java_type) {
     base %in% BOOLEAN_TYPES ~ "boolean",
     base %in% STRING_TYPES ~ "string",
     base %in% DATE_TYPES ~ "date",
-    base %in% names(enums) ~ "enum",
+    base %in% enum_names ~ "enum",
     base %in% names(types) ~ "object",
     .default = "unknown"
   )
   list(is_list = is_list, base = base, kind = kind)
 }
 
-# One row per JSON path, depth first in declaration order. LEVEL is the
-# list a path belongs to ("sample" if none).
-expand <- function(type, prefix = "", level = "sample", depth = 0) {
+# One row per JSON path, depth first in declaration order. "[]" marks a
+# list; paths after it belong to each item.
+expand <- function(type, prefix = "", depth = 0) {
   if (depth > 12) {
     stop(str_glue("Data model nesting too deep at {prefix}"), call. = FALSE)
   }
-  fields <- all_fields(type)
-  pmap(fields, \(java_type, json_key, nullable, derived, ...) {
+  pmap(all_fields(type), \(java_type, json_key) {
     info <- type_info(java_type)
     path <- if (prefix == "") json_key else str_c(prefix, ".", json_key)
-    row <- tibble(
-      path = path, parent_type = type, field = json_key, java_type = java_type,
-      json_type = if (info$is_list) "array" else info$kind,
-      item_type = case_when(
-        !info$is_list ~ NA_character_,
-        info$kind == "object" ~ info$base,
-        .default = info$kind
-      ),
-      enum = if (info$kind == "enum") info$base else NA_character_,
-      nullable = nullable, derived = derived, level = level
-    )
+    row <- tibble(path = path, json_type = if (info$is_list) "array" else info$kind)
     if (info$kind != "object") {
       return(row)
     }
     child_prefix <- if (info$is_list) str_c(path, "[]") else path
-    child_level <- if (info$is_list) path else level
-    bind_rows(row, expand(info$base, child_prefix, child_level, depth + 1))
+    bind_rows(row, expand(info$base, child_prefix, depth + 1))
   }) |>
     list_rbind()
 }
 
-declared <- expand("OrangeRecord") |> mutate(in_datamodel = TRUE)
-unknown_types <- declared |> filter(json_type == "unknown" | item_type %in% "unknown")
-if (nrow(unknown_types) > 0) {
-  warn_msg("Unresolved data model types: {str_c(unique(unknown_types$java_type), collapse = ', ')}")
+declared <- expand("OrangeRecord") |> mutate(order = row_number())
+if (any(declared$json_type == "unknown")) {
+  warn_msg("Unresolved data model types at: {str_c(declared$path[declared$json_type == 'unknown'], collapse = ', ')}")
 }
 
-# ---- observed ORANGE JSON ----------------------------------------------
+# ---- samples -----------------------------------------------------------
 
 # Every key path in one JSON object, with whether its value is filled
 # (not null, not an empty list). Arrays of objects add "[]".
@@ -258,15 +283,13 @@ samples <- map(orange_files, \(f) {
     mode = if (is.null(json$referenceId)) "tumor_only" else "matched",
     observed = observe_json(json) |> summarize(filled = any(filled), .by = path)
   )
-})
+}) |>
+  unname()
 n_mode <- c(
   matched = sum(map_chr(samples, "mode") == "matched"),
   tumor_only = sum(map_chr(samples, "mode") == "tumor_only")
 )
-log_msg(
-  "{length(samples)} ORANGE files: {n_mode['matched']} matched, ",
-  "{n_mode['tumor_only']} tumor-only"
-)
+log_msg("{length(samples)} samples: {n_mode['matched']} matched, {n_mode['tumor_only']} tumor-only")
 
 fill_status <- function(n_filled, n_total) {
   case_when(
@@ -277,6 +300,229 @@ fill_status <- function(n_filled, n_total) {
   )
 }
 
+# ---- reading the tool files --------------------------------------------
+
+# The files PATTERN names in one group folder, named by role: T for <T>
+# and for the tumor's <S> file, N for <N> and the normal's <S> file.
+resolve_files <- function(sample, pattern) {
+  ids <- c(T = sample$tumor, N = sample$normal) |> discard(is.na)
+  candidates <- if (str_detect(pattern, "<S>")) {
+    map_chr(ids, \(id) str_replace_all(pattern, "<S>", id))
+  } else if (str_detect(pattern, "<N>")) {
+    if (is.na(sample$normal)) character() else c(N = str_replace_all(pattern, "<N>", sample$normal))
+  } else {
+    c(T = pattern)
+  }
+  candidates <- candidates |> str_replace_all("<T>", sample$tumor) |> set_names(names(candidates))
+  files <- path(sample$group_dir, candidates) |> set_names(names(candidates))
+  files[file_exists(files)]
+}
+
+read_tab <- function(file, col_names = TRUE) {
+  read_tsv(file, col_names = col_names, col_types = cols(.default = col_character()),
+           show_col_types = FALSE, na = character())
+}
+
+# Line label and QC-passed count of each samtools flagstat line.
+read_flagstat <- function(file) {
+  lines <- read_lines(file) |> discard(\(x) x == "")
+  tibble(
+    field = lines |>
+      str_remove("^\\d+ \\+ \\d+ ") |>
+      str_remove(" \\((QC-passed|[0-9.]+%|N/A)[^)]*\\)$"),
+    value = str_extract(lines, "^\\d+")
+  )
+}
+
+# Field names in one file under LAYOUT.
+file_fields <- function(file, layout) {
+  if (layout == "flagstat") {
+    return(read_flagstat(file)$field)
+  }
+  if (layout == "key-value") {
+    return(read_tab(file, col_names = FALSE)[[1]])
+  }
+  tab <- read_tab(file)
+  if (layout %in% c("wide", "long")) {
+    return(names(tab))
+  }
+  if (str_starts(layout, "row:")) {
+    key_col <- str_split_1(layout, ":")[2]
+    return(if (key_col %in% names(tab)) unique(tab[[key_col]]) else character())
+  }
+  stop(str_glue("Unknown layout {layout}"), call. = FALSE)
+}
+
+# Values of one field in one file, by role (T or N). NULL for layouts
+# with more than one value per field (long).
+field_values <- function(file, layout, field, file_role) {
+  if (layout == "flagstat") {
+    v <- read_flagstat(file) |> filter(field == !!field)
+    return(tibble(role = file_role, value = v$value))
+  }
+  if (layout == "key-value") {
+    v <- read_tab(file, col_names = FALSE) |> filter(X1 == field)
+    return(tibble(role = file_role, value = v$X2))
+  }
+  tab <- read_tab(file)
+  if (layout == "wide") {
+    if (!field %in% names(tab) || nrow(tab) == 0) return(tibble(role = character(), value = character()))
+    return(tibble(role = file_role, value = tab[[field]][1]))
+  }
+  if (str_starts(layout, "row:")) {
+    cols <- str_split_1(layout, ":")
+    rows <- tab |> filter(.data[[cols[2]]] == field)
+    role <- if ("SampleType" %in% names(rows)) {
+      if_else(rows$SampleType == "NORMAL", "N", "T")
+    } else {
+      rep(file_role, nrow(rows))
+    }
+    return(tibble(role = role, value = rows[[cols[3]]]))
+  }
+  NULL
+}
+
+# ---- presence of each field --------------------------------------------
+
+file_layouts <- fields |> distinct(file, layout)
+found <- samples |>
+  imap(\(s, i) {
+    pmap(file_layouts, \(file, layout) {
+      paths <- resolve_files(s, file)
+      tibble(
+        sample = i, file = file, layout = layout, mode = s$mode,
+        field = list(unique(unlist(map(paths, \(p) file_fields(p, layout)))))
+      )
+    }) |>
+      list_rbind()
+  }) |>
+  list_rbind()
+
+presence <- fields |>
+  select(file, layout, field) |>
+  inner_join(found |> rename(fields_found = field), by = c("file", "layout"),
+             relationship = "many-to-many") |>
+  mutate(present = map2_lgl(field, fields_found, \(f, fs) f %in% fs)) |>
+  summarize(n_present = sum(present), .by = c(file, layout, field, mode)) |>
+  pivot_wider(names_from = mode, values_from = n_present, names_prefix = "n_")
+for (col in c("n_matched", "n_tumor_only")) {
+  if (!col %in% names(presence)) presence[[col]] <- 0L
+}
+
+undocumented <- found |>
+  unnest_longer(field) |>
+  filter(!is.na(field)) |>
+  distinct(file, layout, field) |>
+  anti_join(fields, by = c("file", "layout", "field"))
+walk(seq_len(nrow(undocumented)), \(i) {
+  warn_msg("Field not in fields.csv: {undocumented$file[i]} {undocumented$field[i]}")
+})
+
+# ---- copy checks -------------------------------------------------------
+
+decimals <- function(x) {
+  d <- str_extract(x, "(?<=\\.)\\d+$")
+  if_else(is.na(d), 0L, nchar(d))
+}
+
+# Equal as numbers (to the coarser precision; an integer only if exactly
+# equal to the other value) or, if not numbers, as upper-case text.
+same_value <- function(a, b) {
+  na <- suppressWarnings(as.numeric(a))
+  nb <- suppressWarnings(as.numeric(b))
+  da <- decimals(a)
+  db <- decimals(b)
+  d <- pmin(da, db, 4L)
+  tol <- if_else(d == 0L & da != db, 1e-9, 0.5 * 10^(-d) + 1e-9)
+  if_else(!is.na(na) & !is.na(nb), abs(na - nb) <= tol, str_to_upper(a) == str_to_upper(b))
+}
+
+layout_of <- fields |> distinct(file, layout, field)
+
+check_copy <- function(file, layout, field, source) {
+  src <- str_match(source, "^(.+)::(.+)$")
+  if (is.na(src[1, 1])) {
+    return("not checked")
+  }
+  src_layout <- layout_of |> filter(file == src[1, 2], field == src[1, 3]) |> pull(layout)
+  if (length(src_layout) == 0) {
+    return("not checked (source file not described here)")
+  }
+  if (layout == "long" || src_layout[1] == "long") {
+    return("not checked (multi-row file)")
+  }
+  pairs <- map(samples, \(s) {
+    get <- function(pattern, lay, fld) {
+      paths <- resolve_files(s, pattern)
+      imap(paths, \(p, r) field_values(p, lay, fld, r)) |> list_rbind()
+    }
+    a <- get(file, layout, field)
+    b <- get(src[1, 2], src_layout[1], src[1, 3])
+    if (is.null(a) || is.null(b) || nrow(a) == 0 || nrow(b) == 0) return(NULL)
+    inner_join(a, b, by = "role", suffix = c("_a", "_b"))
+  }) |>
+    list_rbind() |>
+    filter(value_a != "", value_b != "")
+  if (nrow(pairs) == 0) {
+    return("not checked (no values)")
+  }
+  n_same <- sum(same_value(pairs$value_a, pairs$value_b))
+  if (n_same < nrow(pairs)) {
+    warn_msg("Copy differs: {file} {field} vs {source} ({nrow(pairs) - n_same} of {nrow(pairs)})")
+    return(str_glue("DIFFERS in {nrow(pairs) - n_same} of {nrow(pairs)}"))
+  }
+  str_glue("equal in {n_same} of {nrow(pairs)}")
+}
+
+fields_out <- fields |>
+  left_join(presence, by = c("file", "layout", "field")) |>
+  mutate(
+    check = pmap_chr(list(file, layout, field, source, role), \(f, l, fl, s, r) {
+      if (r == "copy") check_copy(f, l, fl, s) else ""
+    }),
+    present_matched = fill_status(coalesce(n_matched, 0L), n_mode[["matched"]]),
+    present_tumor_only = fill_status(coalesce(n_tumor_only, 0L), n_mode[["tumor_only"]])
+  ) |>
+  left_join(select(files, file, tool), by = "file") |>
+  select(tool, file, layout, field, role, description, source, check,
+         present_matched, present_tumor_only, notes)
+
+# ---- files table -------------------------------------------------------
+
+role_counts <- fields |>
+  count(file, role) |>
+  pivot_wider(names_from = role, values_from = n, names_prefix = "n_", values_fill = 0L)
+for (r in FIELD_ROLES) {
+  col <- str_c("n_", r)
+  if (!col %in% names(role_counts)) role_counts[[col]] <- 0L
+}
+files_present <- samples |>
+  map(\(s) {
+    tibble(file = files$file, mode = s$mode,
+           found = map_lgl(files$file, \(f) length(resolve_files(s, f)) > 0))
+  }) |>
+  list_rbind() |>
+  summarize(n = sum(found), .by = c(file, mode)) |>
+  pivot_wider(names_from = mode, values_from = n, names_prefix = "n_")
+for (col in c("n_matched", "n_tumor_only")) {
+  if (!col %in% names(files_present)) files_present[[col]] <- 0L
+}
+files_out <- files |>
+  left_join(role_counts, by = "file") |>
+  left_join(files_present, by = "file") |>
+  mutate(
+    present_matched = fill_status(coalesce(n_matched, 0L), n_mode[["matched"]]),
+    present_tumor_only = fill_status(coalesce(n_tumor_only, 0L), n_mode[["tumor_only"]])
+  ) |>
+  select(tool, file, role, holds, layout, detail, n_primary, n_copy, n_derived,
+         n_annotation, n_key, matched_only, present_matched, present_tumor_only, notes)
+missing_files <- files_out |> filter(present_matched == "none", present_tumor_only == "none")
+if (nrow(missing_files) > 0) {
+  warn_msg("Files in no sample: {str_c(missing_files$file, collapse = ', ')}")
+}
+
+# ---- ORANGE map --------------------------------------------------------
+
 observed <- samples |>
   map(\(s) mutate(s$observed, mode = s$mode)) |>
   list_rbind() |>
@@ -285,256 +531,105 @@ observed <- samples |>
 for (col in c("n_matched", "n_tumor_only")) {
   if (!col %in% names(observed)) observed[[col]] <- 0L
 }
-observed <- observed |>
+
+not_in_model <- setdiff(observed$path, declared$path)
+if (length(not_in_model) > 0) {
+  warn_msg("JSON paths not in the data model: {str_c(not_in_model, collapse = ', ')}")
+}
+bad_map <- setdiff(orange_map$path, declared$path)
+if (length(bad_map) > 0) warn_msg("orange_map.csv paths not in the data model: {str_c(bad_map, collapse = ', ')}")
+
+# The map row of each data model path: the longest map path that is the
+# path itself or one of its ancestors.
+is_under <- function(p, prefix) {
+  p == prefix | str_starts(p, fixed(str_c(prefix, "."))) | str_starts(p, fixed(str_c(prefix, "[]")))
+}
+declared <- declared |>
+  mutate(map_path = map_chr(path, \(p) {
+    hits <- orange_map$path[map_lgl(orange_map$path, \(m) is_under(p, m))]
+    if (length(hits) == 0) NA_character_ else hits[which.max(nchar(hits))]
+  }))
+# Top-level containers (purple, linx) are covered by their children.
+has_mapped_child <- function(p) {
+  others <- declared |> filter(path != p, !is.na(map_path))
+  any(is_under(others$path, p))
+}
+unmapped <- declared |>
+  filter(is.na(map_path)) |>
+  filter(!map_lgl(path, has_mapped_child))
+if (nrow(unmapped) > 0) {
+  warn_msg("ORANGE paths not covered by orange_map.csv: {str_c(unmapped$path, collapse = ', ')}")
+}
+
+path_types <- declared |> select(path, json_type, order)
+path_counts <- declared |> count(map_path, name = "n_paths")
+orange_out <- orange_map |>
+  left_join(path_types, by = "path") |>
+  left_join(path_counts, by = c(path = "map_path")) |>
+  left_join(observed, by = "path") |>
   mutate(
-    in_json = TRUE,
+    n_paths = coalesce(n_paths, 0L),
     filled_matched = fill_status(coalesce(n_matched, 0L), n_mode[["matched"]]),
     filled_tumor_only = fill_status(coalesce(n_tumor_only, 0L), n_mode[["tumor_only"]])
   ) |>
-  select(path, in_json, filled_matched, filled_tumor_only)
-
-# ---- ORANGE fields table -----------------------------------------------
-
-# Group of a path, as in the per-sample readout catalog: A one value set
-# per sample, B somatic events, C germline. First matching prefix wins.
-GROUP_RULES <- tribble(
-  ~prefix, ~group,
-  "plots", "display",
-  "isofox", "RNA",
-  "purple.germlineDrivers", "C",
-  "purple.germlineVariants", "C",
-  "purple.germlineGainsDels", "C",
-  "linx.germlineBreakends", "C",
-  "purple.somaticDrivers", "B",
-  "purple.somaticVariants", "B",
-  "purple.somaticGainsDels", "B",
-  "purple.armCopyNumberAbberations", "B",
-  "linx", "B"
-)
-
-assign_group <- function(paths) {
-  map_chr(paths, \(p) {
-    hit <- GROUP_RULES |>
-      filter(
-        p == prefix |
-          str_starts(p, fixed(str_c(prefix, "."))) |
-          str_starts(p, fixed(str_c(prefix, "[]")))
-      )
-    if (nrow(hit) == 0) "A" else hit$group[1]
-  })
-}
-
-descriptions <- read_csv(
-  path(curated_dir, "orange_descriptions.csv"),
-  col_types = cols(.default = col_character()), show_col_types = FALSE
-)
-dup_desc <- descriptions |> count(type, field) |> filter(n > 1)
-if (nrow(dup_desc) > 0) {
-  warn_msg("Duplicate descriptions: {str_c(dup_desc$type, '.', dup_desc$field, collapse = ', ')}")
-}
-
-orange_fields <- declared |>
-  full_join(observed, by = "path") |>
-  mutate(
-    order = row_number(),
-    in_datamodel = coalesce(in_datamodel, FALSE),
-    in_json = coalesce(in_json, FALSE),
-    filled_matched = coalesce(filled_matched, fill_status(0L, n_mode[["matched"]])),
-    filled_tumor_only = coalesce(filled_tumor_only, fill_status(0L, n_mode[["tumor_only"]])),
-    group = assign_group(path)
-  ) |>
-  left_join(descriptions, by = c(parent_type = "type", field = "field")) |>
-  select(
-    order, path, group, level, json_type, item_type, enum, nullable, derived,
-    in_datamodel, in_json, filled_matched, filled_tumor_only,
-    description, source_file, source_column, parent_type, field, java_type
-  )
-
-unused_desc <- descriptions |>
-  anti_join(orange_fields, by = c(type = "parent_type", field = "field"))
-if (nrow(unused_desc) > 0) {
-  keys <- str_c(unused_desc$type, ".", unused_desc$field, collapse = ", ")
-  warn_msg("Descriptions with no data model field: {keys}")
-}
-not_in_model <- orange_fields |> filter(!in_datamodel)
-if (nrow(not_in_model) > 0) {
-  warn_msg("JSON paths not in the data model: {str_c(not_in_model$path, collapse = ', ')}")
-}
-undescribed_a <- orange_fields |> filter(group == "A", is.na(description))
-if (nrow(undescribed_a) > 0) {
-  warn_msg("Group A paths without a description: {str_c(undescribed_a$path, collapse = ', ')}")
-}
-
-orange_enums <- orange_fields |>
-  filter(!is.na(enum)) |>
-  summarize(used_by = str_c(path, collapse = "; "), .by = enum) |>
-  mutate(value = map(enum, \(e) enums[[e]]$values)) |>
-  unnest_longer(value) |>
-  select(enum, value, used_by)
-
-# ---- Group A tool files ------------------------------------------------
-
-group_a <- read_csv(
-  path(curated_dir, "group_a_fields.csv"),
-  col_types = cols(.default = col_character()), show_col_types = FALSE
-)
-
-# The files PATTERN names in one group folder: <T> tumor, <N> normal,
-# <S> each of the two.
-resolve_files <- function(sample, pattern) {
-  ids <- c(sample$tumor, sample$normal) |> discard(is.na)
-  candidates <- if (str_detect(pattern, "<S>")) {
-    map_chr(ids, \(id) str_replace_all(pattern, "<S>", id))
-  } else {
-    pattern
-  }
-  candidates <- candidates |> str_replace_all("<T>", sample$tumor)
-  if (is.na(sample$normal)) {
-    candidates <- candidates |> discard(\(x) str_detect(x, "<N>"))
-  } else {
-    candidates <- candidates |> str_replace_all("<N>", sample$normal)
-  }
-  files <- path(sample$group_dir, candidates)
-  files[file_exists(files)]
-}
-
-# The field names a file holds under LAYOUT.
-file_fields <- function(file, layout) {
-  lines <- read_lines(file, lazy = FALSE)
-  lines <- lines[lines != ""]
-  if (length(lines) == 0) {
-    return(character())
-  }
-  if (layout %in% c("wide", "long")) {
-    return(str_split_1(lines[1], "\t"))
-  }
-  if (layout == "key-value") {
-    return(str_extract(lines, "^[^\t]+"))
-  }
-  if (str_starts(layout, "row:")) {
-    col <- str_remove(layout, "^row:")
-    header <- str_split_1(lines[1], "\t")
-    idx <- match(col, header)
-    if (is.na(idx) || length(lines) < 2) {
-      return(character())
-    }
-    return(lines[-1] |> str_split("\t") |> map_chr(\(x) x[idx]) |> unique())
-  }
-  if (layout == "text") {
-    return("(samtools flagstat lines)")
-  }
-  stop(str_glue("Unknown layout {layout}"), call. = FALSE)
-}
-
-file_layouts <- group_a |> distinct(file, layout)
-found <- samples |>
-  map(\(s) {
-    pmap(file_layouts, \(file, layout) {
-      files <- resolve_files(s, file)
-      tibble(
-        file = file, layout = layout, mode = s$mode,
-        field = list(unique(unlist(map(files, \(f) file_fields(f, layout)))))
-      )
-    }) |>
-      list_rbind()
-  }) |>
-  list_rbind() |>
-  mutate(sample = rep(seq_along(samples), each = nrow(file_layouts)))
-
-presence <- group_a |>
-  select(file, layout, field) |>
-  inner_join(
-    found |> rename(fields = field),
-    by = c("file", "layout"), relationship = "many-to-many"
-  ) |>
-  mutate(present = map2_lgl(field, fields, \(f, fs) f %in% fs)) |>
-  summarize(n_present = sum(present), .by = c(file, layout, field, mode)) |>
-  pivot_wider(names_from = mode, values_from = n_present, names_prefix = "n_")
-for (col in c("n_matched", "n_tumor_only")) {
-  if (!col %in% names(presence)) presence[[col]] <- 0L
-}
-
-undocumented <- found |>
-  filter(layout != "text") |>
-  unnest_longer(field) |>
-  filter(!is.na(field)) |>
-  distinct(file, layout, field) |>
-  anti_join(group_a, by = c("file", "layout", "field"))
-if (nrow(undocumented) > 0) {
-  walk(seq_len(nrow(undocumented)), \(i) {
-    warn_msg("Field not in group_a_fields.csv: {undocumented$file[i]} {undocumented$field[i]}")
-  })
-}
-
-bad_paths <- group_a |>
-  filter(!is.na(orange_path), !orange_path %in% orange_fields$path)
-if (nrow(bad_paths) > 0) {
-  warn_msg("orange_path not in ORANGE: {str_c(unique(bad_paths$orange_path), collapse = ', ')}")
-}
-
-group_a_fields <- group_a |>
-  left_join(presence, by = c("file", "layout", "field")) |>
-  mutate(
-    in_orange = if_else(is.na(orange_path), "no", "yes"),
-    present_matched = fill_status(coalesce(n_matched, 0L), n_mode[["matched"]]),
-    present_tumor_only = fill_status(coalesce(n_tumor_only, 0L), n_mode[["tumor_only"]])
-  ) |>
-  select(
-    readout, file, layout, field, description, in_orange, orange_path,
-    present_matched, present_tumor_only, notes
-  )
+  arrange(order) |>
+  select(path, role, source, rule, json_type, n_paths, filled_matched, filled_tumor_only, notes)
 
 # ---- write -------------------------------------------------------------
 
-write_csv(orange_fields, path(tables_dir, "orange_fields.csv"), na = "")
-write_csv(orange_enums, path(tables_dir, "orange_enums.csv"), na = "")
-write_csv(group_a_fields, path(tables_dir, "group_a_fields.csv"), na = "")
+write_csv(files_out, path(tables_dir, "files.csv"), na = "")
+write_csv(fields_out, path(tables_dir, "fields.csv"), na = "")
+write_csv(orange_out, path(tables_dir, "orange.csv"), na = "")
 
 readme <- tribble(
   ~sheet, ~column, ~description,
   "(all)", "", str_glue(
-    "ORANGE data model {model_tag}. Filled/present columns from ",
-    "{n_mode['matched']} matched and {n_mode['tumor_only']} tumor-only samples: ",
-    "all, some or none of them."
+    "Which file first holds each per-sample value. Present/filled columns from ",
+    "{n_mode['matched']} matched and {n_mode['tumor_only']} tumor-only samples: all, some or none. ",
+    "ORANGE data model {model_tag}."
   ),
-  "group_a_fields", "", "Every field of the per-sample summary (Group A) tool files and its ORANGE path.",
-  "group_a_fields", "readout", "Short name of the readout.",
-  "group_a_fields", "file", "File under out/<group>/. <T> tumor ID, <N> normal ID, <S> either (one file per BAM).",
-  "group_a_fields", "layout", "wide: one row, one column per field. long: one row per item. key-value: two columns, no header. row:COL: the field is a value of column COL. text: not a table.",
-  "group_a_fields", "field", "Column name, key or row value.",
-  "group_a_fields", "description", "What the field holds (from the tool README where it has one).",
-  "group_a_fields", "in_orange", "yes if ORANGE holds the same value.",
-  "group_a_fields", "orange_path", "Path of that value in the ORANGE JSON (see orange_fields).",
-  "group_a_fields", "present_matched", "Whether the field is in the files of the matched samples.",
-  "group_a_fields", "present_tumor_only", "Whether the field is in the files of the tumor-only samples.",
-  "group_a_fields", "notes", "Differences from the tool README and other remarks.",
-  "orange_fields", "", "Every path of the ORANGE JSON: from the data model, checked against the JSON files.",
-  "orange_fields", "order", "Order in the data model (depth first).",
-  "orange_fields", "path", "JSON path. [] marks a list; fields after it belong to each list item.",
-  "orange_fields", "group", "A: one value set per sample. B: somatic events. C: germline. RNA: needs RNA data. display: plot file paths.",
-  "orange_fields", "level", "sample: one value per sample. Otherwise the list the path belongs to.",
-  "orange_fields", "json_type", "string, number, integer, boolean, date, enum, object or array.",
-  "orange_fields", "item_type", "For arrays: type of the items.",
-  "orange_fields", "enum", "For enum fields: the enum name (values in orange_enums).",
-  "orange_fields", "nullable", "TRUE if the data model allows null.",
-  "orange_fields", "derived", "TRUE if computed from other fields of the same record.",
-  "orange_fields", "in_datamodel", "FALSE if the path is in the JSON files but not in the data model.",
-  "orange_fields", "in_json", "FALSE if the path is in no JSON file (its parent is null or empty everywhere).",
-  "orange_fields", "filled_matched", "Whether the value is filled (not null, not empty) in the matched samples.",
-  "orange_fields", "filled_tumor_only", "Whether the value is filled in the tumor-only samples.",
-  "orange_fields", "description", "What the field holds. Empty for groups B and C (not yet documented).",
-  "orange_fields", "source_file", "Tool file the value comes from; (ORANGE) if ORANGE computes it.",
-  "orange_fields", "source_column", "Column or key in that file.",
-  "orange_fields", "parent_type", "Data model type that holds the field.",
-  "orange_fields", "field", "JSON key.",
-  "orange_fields", "java_type", "Type in the data model.",
-  "orange_enums", "", "Allowed values of each enum in the data model.",
-  "orange_enums", "enum", "Enum name.",
-  "orange_enums", "value", "Allowed value.",
-  "orange_enums", "used_by", "ORANGE paths with this enum."
+  "(all)", "role", str_c(
+    "primary: first written here, by the tool that computes it. ",
+    "copy: the same value as a field of another file (renamed, rounded or recoded). ",
+    "derived: computed from values that another file holds, by the rule in source. ",
+    "annotation: looked up from a fixed reference table (drug links, names, thresholds), not measured. ",
+    "key: identifies the row (sample, gene, classifier), holds no result."
+  ),
+  "files", "", "One row per per-sample file. primary: holds values no other file has. secondary: holds no primary values; only copies, derived values and annotations.",
+  "files", "tool", "Tool that writes the file.",
+  "files", "file", "Path under out/<group>/. <T> tumor ID, <N> normal ID, <S> either (one file per BAM).",
+  "files", "role", "primary or secondary (see above).",
+  "files", "holds", "What the file holds.",
+  "files", "layout", "wide: one row, one column per field. long: one row per item. key-value: two columns, no header. flagstat: samtools flagstat text. json, other.",
+  "files", "detail", "fields: described field by field in the fields sheet. orange: in the orange sheet. none: not described field by field.",
+  "files", "n_primary", "Number of fields by role (for files with detail fields). Also n_copy, n_derived, n_annotation, n_key.",
+  "files", "matched_only", "yes if the tool runs only with a matched normal.",
+  "files", "present_matched", "Whether the file exists for the matched samples.",
+  "files", "present_tumor_only", "Whether the file exists for the tumor-only samples.",
+  "files", "notes", "Remarks.",
+  "fields", "", "Every field of the files with detail fields.",
+  "fields", "layout", "As in files. row:K:V: the field is a value of column K, its value is in column V.",
+  "fields", "field", "Column name, key, row value or flagstat line.",
+  "fields", "role", "primary, copy, derived, annotation or key (see above).",
+  "fields", "description", "What the field holds (from the tool README where it has one).",
+  "fields", "source", "copy: FILE::FIELD the value is copied from. derived: the rule. annotation: the reference table.",
+  "fields", "check", "For copies: whether the values equal the source in every sample (tumor and normal values separately). Multi-row files are not checked by this script.",
+  "fields", "present_matched", "Whether the field is in the files of the matched samples.",
+  "fields", "present_tumor_only", "Whether the field is in the files of the tumor-only samples.",
+  "fields", "notes", "Differences from the tool README and other remarks.",
+  "orange", "", "Where each part of the ORANGE JSON comes from. A row covers its path and every path under it that has no row of its own. ORANGE adds the rows whose role is not copy.",
+  "orange", "path", "JSON path. [] marks a list; paths after it belong to each item.",
+  "orange", "role", "copy, derived, annotation (see above); metadata: run setting; plot: image path; rna: null without RNA data.",
+  "orange", "source", "Tool file (copy) or input values (derived, annotation).",
+  "orange", "rule", "For lists: which records ORANGE keeps. For derived values: how ORANGE computes them.",
+  "orange", "json_type", "string, number, integer, boolean, date, enum, object or array.",
+  "orange", "n_paths", "Number of JSON paths the row covers.",
+  "orange", "filled_matched", "Whether the value is filled (not null, not empty) in the matched samples.",
+  "orange", "filled_tumor_only", "Whether the value is filled in the tumor-only samples.",
+  "orange", "notes", "Remarks, including errors in ORANGE."
 )
 
-TEXT_COLS <- c("description", "notes", "used_by")
+TEXT_COLS <- c("description", "notes", "holds", "rule", "source")
 TEXT_WIDTH <- 60
 MIN_COL_WIDTH <- 6
 MAX_COL_WIDTH <- 50
@@ -562,7 +657,7 @@ write_workbook <- function(sheets, file) {
       addFilter(wb, name, rows = 1, cols = seq_len(ncol(df)))
     }
     widths <- auto_widths(df)
-    text <- which(names(df) %in% TEXT_COLS | name == "readme" & names(df) == "description")
+    text <- which(names(df) %in% TEXT_COLS)
     widths[text] <- TEXT_WIDTH
     setColWidths(wb, name, cols = seq_len(ncol(df)), widths = widths)
     if (length(text) > 0 && nrow(df) > 0) {
@@ -580,16 +675,17 @@ write_workbook <- function(sheets, file) {
 
 workbook <- path(scheme_dir, "dbScheme.xlsx")
 write_workbook(
-  list(
-    readme = readme, group_a_fields = group_a_fields,
-    orange_fields = orange_fields, orange_enums = orange_enums
-  ),
+  list(readme = readme, files = files_out, fields = fields_out, orange = orange_out),
   workbook
 )
 
-log_msg("orange_fields: {nrow(orange_fields)} paths ({sum(orange_fields$group == 'A')} in group A)")
-log_msg("orange_enums: {nrow(orange_enums)} values")
-n_in_orange <- sum(group_a_fields$in_orange == "yes")
-log_msg("group_a_fields: {nrow(group_a_fields)} fields, {n_in_orange} in ORANGE")
+log_msg("files: {nrow(files_out)} ({sum(files_out$role == 'primary')} primary)")
+log_msg(
+  "fields: {nrow(fields_out)} ({sum(fields_out$role == 'primary')} primary, ",
+  "{sum(fields_out$role == 'copy')} copy, {sum(fields_out$role == 'derived')} derived, ",
+  "{sum(fields_out$role == 'annotation')} annotation, {sum(fields_out$role == 'key')} key)"
+)
+log_msg("copies checked equal: {sum(str_starts(fields_out$check, 'equal'))}")
+log_msg("orange: {nrow(orange_out)} rows covering {sum(orange_out$n_paths)} of {nrow(declared)} paths")
 log_msg("Wrote {tables_dir} and {workbook}")
 log_msg("{warn_state$n} warnings")

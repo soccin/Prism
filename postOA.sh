@@ -15,16 +15,19 @@
 #   2. scripts/svCohort.R writes one table of the somatic SV events of all
 #      groups: every record of PURPLE's purple.sv.vcf.gz (all FILTER
 #      values), one row per event, with every field PURPLE, ESVEE and LINX
-#      wrote for it, region tracks (TRACK_DIR) and the same breakends in
-#      other groups, unpacked for analysis (fixed pairs split, repeated
-#      columns dropped; each step checked), the read counts of
+#      wrote for it, key columns first, the driver gene panel role of each
+#      gene and the 5' and 3' gene of each fusion, region tracks
+#      (TRACK_DIR) and the same breakends in other groups, unpacked for
+#      analysis (fixed pairs split, repeated columns dropped; each step
+#      checked), the read counts of
 #      bamEvidence.sh (ROOT/res/prism/db/bam_evidence; run it first) and
 #      the matching sites of the population SV call sets (TRACK_DIR,
 #      popSvSites.sh). No row is left out and no value is interpreted.
 #   3. scripts/tsvToParquet.py (python3 with pyarrow) writes the typed
 #      Parquet copy of that table, with the types in its column dictionary.
 #   4. docs/scripts/checkSvCohort.R rebuilds every PURPLE VCF record and
-#      ESVEE row from the table and checks the Parquet copy; the job fails
+#      ESVEE row from the table, recomputes the gene roles and fusion
+#      genes, and checks the Parquet copy; the job fails
 #      if any check fails.
 # Run it from the project directory, as a job or on a compute node:
 #   sbatch ./Prism/postOA.sh [-t TRACK_DIR] [OUT_DIR]
@@ -61,14 +64,18 @@
 # number of fields than its header, if the SV events do not account for
 # every PURPLE record and LINX row, if a tumor or normal has no BAM
 # evidence file or its rows do not match the PURPLE records one to one,
-# if a population SV table is missing, if an unpacking step finds a row that
+# if a population SV table is missing, if the driver gene panel is missing
+# or lists a gene twice or a role other than ONCO or TSG, if a LINX fusion
+# breakend has no breakend row or a fusion name is neither
+# <5' gene>_<3' gene> nor @<region>_<3' gene>, if an unpacking step finds a row that
 # breaks its assumption, if the column dictionary differs from its
 # reference copy docs/sv_cohort_filtered.columns.csv (step 2 then writes
 # the new one as sv_cohort_filtered.columns.new.csv to review and copy
 # over the reference), if a value does not fit its column's type, or if
 # a check of step 4 fails.
-# The Hartwig resource folder (sv_prep_blacklist, unmap_regions) is read
-# from ref_data_hmf_data_path in the newest OUT_DIR/pipeline_info/params_*.json.
+# The Hartwig resource folder (sv_prep_blacklist, unmap_regions,
+# DriverGenePanel) is read from ref_data_hmf_data_path in the newest
+# OUT_DIR/pipeline_info/params_*.json.
 # Logs go to OUT_DIR/logs/other, with the pipeline's own:
 #   postOA.<jobid>.out   this job's SLURM log, moved there at the end of
 #                        the job (sbatch only)
@@ -223,7 +230,7 @@ python3 "$PDIR/scripts/tsvToParquet.py" \
     "$RES_DIR/sv_cohort_filtered.columns.tsv" \
     "$RES_DIR/sv_cohort_filtered.parquet"
 
-Rscript --vanilla "$PDIR/docs/scripts/checkSvCohort.R" "$OUT_DIR" "$RES_DIR"
+Rscript --vanilla "$PDIR/docs/scripts/checkSvCohort.R" "$OUT_DIR" "$RES_DIR" "$HMF_DIR"
 
 echo "Tables in $RES_DIR"
 echo "Logs in $LOG_DIR"

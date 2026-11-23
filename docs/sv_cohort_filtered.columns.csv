@@ -1,22 +1,67 @@
 column,description,type,list_sep,list_count_column
 group_id,oncoanalyser group,string,,
 sample_id,tumor sample,string,,
-normal_id,matched normal sample (empty: tumor-only),string,,
-run_mode,PURPLE run mode: TUMOR_GERMLINE (matched normal) or TUMOR (tumor-only),string,,
 event_key,"sample_id:start_id, unique over the cohort",string,,
+run_mode,PURPLE run mode: TUMOR_GERMLINE (matched normal) or TUMOR (tumor-only),string,,
+filter,VCF FILTER (PURPLE SV VCF) [one value per event: the same on both breakends of an SV (checked)],string,,
+linx_type,LINX svs.tsv column type (as LINX wrote it),string,,
+info_SVTYPE,PURPLE SV VCF INFO SVTYPE: Type of structural variant [one value per event: the same on both breakends of an SV (checked)],string,,
+start_chrom,start breakend: VCF CHROM,string,,
+start_pos,start breakend: VCF POS,integer,,
+start_orient,"start breakend: derived from ALT: 1 if ALT starts with the reference base, else -1 (as ESVEE and LINX)",integer,,
+end_chrom,end breakend: VCF CHROM,string,,
+end_pos,end breakend: VCF POS,integer,,
+end_orient,"end breakend: derived from ALT: 1 if ALT starts with the reference base, else -1 (as ESVEE and LINX)",integer,,
+length,"derived: end position - start position, both breakends on one chromosome",integer,,
+start_info_CIPOS_lower,"start breakend: PURPLE SV VCF INFO CIPOS: Confidence interval around position [first value, the lower offset]",integer,,
+start_info_CIPOS_upper,"start breakend: PURPLE SV VCF INFO CIPOS: Confidence interval around position [second value, the upper offset]",integer,,
+end_info_CIPOS_lower,"end breakend: PURPLE SV VCF INFO CIPOS: Confidence interval around position [first value, the lower offset]",integer,,
+end_info_CIPOS_upper,"end breakend: PURPLE SV VCF INFO CIPOS: Confidence interval around position [second value, the upper offset]",integer,,
+start_linx_bnd_gene,"start breakend: LINX breakend.tsv column gene, one value per transcript, a list (in the TSV joined with |)",list<string>,|,start_linx_bnd_n
+start_gene_role,"start breakend: role of each gene of linx_bnd_gene, in the same order: likelihoodType (ONCO or TSG) in the driver gene panel LINX reads (HMF_DIR/common/DriverGenePanel.38.tsv); empty element: gene not on the panel; a list (in the TSV joined with |). Hartwig's pan-cancer roles, mostly from solid tumors (JAK1 and ERBB4 are TSG there)",list<string>,|,start_linx_bnd_n
+start_linx_bnd_canonical,"start breakend: LINX breakend.tsv column canonical, one value per transcript, a list (in the TSV joined with |)",list<boolean>,|,start_linx_bnd_n
+start_linx_bnd_regionType,"start breakend: LINX breakend.tsv column regionType, one value per transcript, a list (in the TSV joined with |)",list<string>,|,start_linx_bnd_n
+start_linx_bnd_codingType,"start breakend: LINX breakend.tsv column codingType, one value per transcript, a list (in the TSV joined with |)",list<string>,|,start_linx_bnd_n
+start_linx_bnd_disruptive,"start breakend: LINX breakend.tsv column disruptive, one value per transcript, a list (in the TSV joined with |)",list<boolean>,|,start_linx_bnd_n
+start_linx_bnd_exonUp,"start breakend: LINX breakend.tsv column exonUp, one value per transcript, a list (in the TSV joined with |)",list<integer>,|,start_linx_bnd_n
+start_linx_bnd_exonDown,"start breakend: LINX breakend.tsv column exonDown, one value per transcript, a list (in the TSV joined with |)",list<integer>,|,start_linx_bnd_n
+start_linx_bnd_undisruptedCopyNumber,"start breakend: LINX breakend.tsv column undisruptedCopyNumber, one value per transcript, a list (in the TSV joined with |)",list<double>,|,start_linx_bnd_n
+start_linx_bnd_reportedStatus,"start breakend: LINX breakend.tsv column reportedStatus, one value per transcript, a list (in the TSV joined with |)",list<string>,|,start_linx_bnd_n
+end_linx_bnd_gene,"end breakend: LINX breakend.tsv column gene, one value per transcript, a list (in the TSV joined with |)",list<string>,|,end_linx_bnd_n
+end_gene_role,"end breakend: role of each gene of linx_bnd_gene, in the same order: likelihoodType (ONCO or TSG) in the driver gene panel LINX reads (HMF_DIR/common/DriverGenePanel.38.tsv); empty element: gene not on the panel; a list (in the TSV joined with |). Hartwig's pan-cancer roles, mostly from solid tumors (JAK1 and ERBB4 are TSG there)",list<string>,|,end_linx_bnd_n
+end_linx_bnd_canonical,"end breakend: LINX breakend.tsv column canonical, one value per transcript, a list (in the TSV joined with |)",list<boolean>,|,end_linx_bnd_n
+end_linx_bnd_regionType,"end breakend: LINX breakend.tsv column regionType, one value per transcript, a list (in the TSV joined with |)",list<string>,|,end_linx_bnd_n
+end_linx_bnd_codingType,"end breakend: LINX breakend.tsv column codingType, one value per transcript, a list (in the TSV joined with |)",list<string>,|,end_linx_bnd_n
+end_linx_bnd_disruptive,"end breakend: LINX breakend.tsv column disruptive, one value per transcript, a list (in the TSV joined with |)",list<boolean>,|,end_linx_bnd_n
+end_linx_bnd_exonUp,"end breakend: LINX breakend.tsv column exonUp, one value per transcript, a list (in the TSV joined with |)",list<integer>,|,end_linx_bnd_n
+end_linx_bnd_exonDown,"end breakend: LINX breakend.tsv column exonDown, one value per transcript, a list (in the TSV joined with |)",list<integer>,|,end_linx_bnd_n
+end_linx_bnd_undisruptedCopyNumber,"end breakend: LINX breakend.tsv column undisruptedCopyNumber, one value per transcript, a list (in the TSV joined with |)",list<double>,|,end_linx_bnd_n
+end_linx_bnd_reportedStatus,"end breakend: LINX breakend.tsv column reportedStatus, one value per transcript, a list (in the TSV joined with |)",list<string>,|,end_linx_bnd_n
+fusion_gene_5p,"gene of each fusion's 5' breakend: LINX breakend.tsv gene of fivePrimeBreakendId, one value per fusion in the order of the linx_fusion_* lists, a list (in the TSV joined with |). linx_fusion_name is <5' gene>_<3' gene>, except where LINX names an enhancer partner on the 5' side by its region (@IGH, @IGK, @BCL11B): then fusion_gene_5p is the gene at the breakend (checked)",list<string>,|,linx_fusion_n
+fusion_gene_3p,"gene of each fusion's 3' breakend: LINX breakend.tsv gene of threePrimeBreakendId, one value per fusion in the order of the linx_fusion_* lists, a list (in the TSV joined with |). linx_fusion_name is <5' gene>_<3' gene>, except where LINX names an enhancer partner on the 5' side by its region (@IGH, @IGK, @BCL11B): then fusion_gene_5p is the gene at the breakend (checked)",list<string>,|,linx_fusion_n
+linx_fusion_phased,"LINX fusion.tsv column phased for the fusions this SV takes part in (side: 5p or 3p), a list (in the TSV joined with |)",list<string>,|,linx_fusion_n
+linx_fusion_reported,"LINX fusion.tsv column reported for the fusions this SV takes part in (side: 5p or 3p), a list (in the TSV joined with |)",list<boolean>,|,linx_fusion_n
+linx_fusion_reportedType,"LINX fusion.tsv column reportedType for the fusions this SV takes part in (side: 5p or 3p), a list (in the TSV joined with |)",list<string>,|,linx_fusion_n
+linx_cluster_driver_gene,"LINX drivers.tsv column gene for the event's cluster, a list (in the TSV joined with |)",list<string>,|,linx_cluster_driver_n
+linx_cluster_driver_eventType,"LINX drivers.tsv column eventType for the event's cluster, a list (in the TSV joined with |)",list<string>,|,linx_cluster_driver_n
+linx_cluster_category,LINX clusters.tsv column category,string,,
+linx_cluster_resolvedType,LINX clusters.tsv column resolvedType,string,,
+linx_cluster_clusterCount,LINX clusters.tsv column clusterCount,integer,,
+start_info_PURPLE_CN_CHANGE,"start breakend: PURPLE SV VCF INFO PURPLE_CN_CHANGE: Purity adjusted change in copy number at each breakend [this breakend's value: PURPLE writes [start, end] on the start record and [end, start] on the end record; the first value of the record is kept (checked against the mate's record)]",double,,
+end_info_PURPLE_CN_CHANGE,"end breakend: PURPLE SV VCF INFO PURPLE_CN_CHANGE: Purity adjusted change in copy number at each breakend [this breakend's value: PURPLE writes [start, end] on the start record and [end, start] on the end record; the first value of the record is kept (checked against the mate's record)]",double,,
+info_PURPLE_JCN,PURPLE SV VCF INFO PURPLE_JCN: Purity adjusted copy number of variant junction [one value per event: the same on both breakends of an SV (checked)],double,,
+start_info_PURPLE_AF,"start breakend: PURPLE SV VCF INFO PURPLE_AF: Purity adjusted variant allelic frequency [this breakend's value: PURPLE writes [start, end] on the start record and [end, start] on the end record; the first value of the record is kept (checked against the mate's record)]",double,,
+tumor_VF,"PURPLE SV VCF FORMAT VF, tumor: Total variant fragments supporting the breakend [one value per event: the same on both breakends of an SV (checked)]",integer,,
+normal_id,matched normal sample (empty: tumor-only),string,,
 n_breakends,"derived: 2 for an SV with two breakends (MATEID), 1 for a single or inferred breakend",integer,,
 in_linx,derived: TRUE if LINX analyzed the event (LINX keeps FILTER PASS and INFERRED),boolean,,
 linx_start_is_vcf_start,"derived: TRUE if LINX's start breakend is the VCF start; FALSE for some SVs whose breakends share a position, where LINX's start and end columns refer to the other end",boolean,,
 same_chrom,derived: both breakends on one chromosome,boolean,,
-length,"derived: end position - start position, both breakends on one chromosome",integer,,
 start_coords,derived: start chromosome:position:orientation,string,,
 end_coords,derived: end chromosome:position:orientation,string,,
 start_id,VCF ID of the start breakend (the first of the two in the VCF),string,,
 end_id,VCF ID of the end breakend (MATEID of the start),string,,
 qual,VCF QUAL [one value per event: the same on both breakends of an SV (checked)],double,,
-filter,VCF FILTER (PURPLE SV VCF) [one value per event: the same on both breakends of an SV (checked)],string,,
-info_SVTYPE,PURPLE SV VCF INFO SVTYPE: Type of structural variant [one value per event: the same on both breakends of an SV (checked)],string,,
-info_PURPLE_JCN,PURPLE SV VCF INFO PURPLE_JCN: Purity adjusted copy number of variant junction [one value per event: the same on both breakends of an SV (checked)],double,,
 info_SVID,PURPLE SV VCF INFO SVID: ID shared by two breakends [one value per event: the same on both breakends of an SV (checked)],string,,
 info_ASMID,PURPLE SV VCF INFO ASMID: Unique id(s) of assembly(s) containing the breakend [one value per event: the same on both breakends of an SV (checked)],integer,,
 info_ASMINFO,PURPLE SV VCF INFO ASMINFO: Original junction coordinates [one value per event: the same on both breakends of an SV (checked)],string,,
@@ -35,7 +80,6 @@ info_TINC_RECOVERED,PURPLE SV VCF INFO TINC_RECOVERED: Variant recovered from ge
 tumor_GT,"PURPLE SV VCF FORMAT GT, tumor: Genotype [one value per event: the same on both breakends of an SV (checked)]",string,,
 tumor_SF,"PURPLE SV VCF FORMAT SF, tumor: Count of fragments supporting the breakend with a read overlapping the breakend [one value per event: the same on both breakends of an SV (checked)]",integer,,
 tumor_DF,"PURPLE SV VCF FORMAT DF, tumor: Count of discordant fragments with a read either side of the breakend [one value per event: the same on both breakends of an SV (checked)]",integer,,
-tumor_VF,"PURPLE SV VCF FORMAT VF, tumor: Total variant fragments supporting the breakend [one value per event: the same on both breakends of an SV (checked)]",integer,,
 normal_GT,"PURPLE SV VCF FORMAT GT, normal: Genotype [one value per event: the same on both breakends of an SV (checked)]",string,,
 normal_SF,"PURPLE SV VCF FORMAT SF, normal: Count of fragments supporting the breakend with a read overlapping the breakend [one value per event: the same on both breakends of an SV (checked)]",integer,,
 normal_DF,"PURPLE SV VCF FORMAT DF, normal: Count of discordant fragments with a read either side of the breakend [one value per event: the same on both breakends of an SV (checked)]",integer,,
@@ -49,23 +93,16 @@ esvee_bnd_SegmentCount,ESVEE esvee/<sample_id>.esvee.breakend.tsv column Segment
 esvee_bnd_IncompleteFragments,ESVEE esvee/<sample_id>.esvee.breakend.tsv column IncompleteFragments (empty for breakends inferred by PURPLE) [one value per event: the same on both breakends of an SV (checked)],integer,,
 esvee_bnd_AvgFragmentLength,ESVEE esvee/<sample_id>.esvee.breakend.tsv column AvgFragmentLength (empty for breakends inferred by PURPLE) [one value per event: the same on both breakends of an SV (checked)],integer,,
 esvee_bnd_NonPrimaryFragments,ESVEE esvee/<sample_id>.esvee.breakend.tsv column NonPrimaryFragments (empty for breakends inferred by PURPLE) [one value per event: the same on both breakends of an SV (checked)],integer,,
-start_chrom,start breakend: VCF CHROM,string,,
-start_pos,start breakend: VCF POS,integer,,
-start_orient,"start breakend: derived from ALT: 1 if ALT starts with the reference base, else -1 (as ESVEE and LINX)",integer,,
 start_ref,start breakend: VCF REF,string,,
 start_alt,start breakend: VCF ALT,string,,
 start_vcf_order,start breakend: record number in the PURPLE SV VCF,integer,,
-start_info_CIPOS_lower,"start breakend: PURPLE SV VCF INFO CIPOS: Confidence interval around position [first value, the lower offset]",integer,,
-start_info_CIPOS_upper,"start breakend: PURPLE SV VCF INFO CIPOS: Confidence interval around position [second value, the upper offset]",integer,,
 start_info_INFERRED,start breakend: PURPLE SV VCF INFO INFERRED: Breakend inferred from copy number transition,boolean,,
 start_info_PURPLE_CN,"start breakend: PURPLE SV VCF INFO PURPLE_CN: Purity adjusted copy number surrounding variant location [this breakend's value: PURPLE writes [start, end] on the start record and [end, start] on the end record; the first value of the record is kept (checked against the mate's record)]",double,,
-start_info_PURPLE_CN_CHANGE,"start breakend: PURPLE SV VCF INFO PURPLE_CN_CHANGE: Purity adjusted change in copy number at each breakend [this breakend's value: PURPLE writes [start, end] on the start record and [end, start] on the end record; the first value of the record is kept (checked against the mate's record)]",double,,
 start_info_ASMSEG,start breakend: PURPLE SV VCF INFO ASMSEG: Segment indices in assembly(s) containing the breakend,integer,,
 start_info_BEAOR,start breakend: PURPLE SV VCF INFO BEAOR: Breakend orientation(s) in assembly(s),integer,,
 start_info_BEAPOS,start breakend: PURPLE SV VCF INFO BEAPOS: Breakend position(s) in assembly(s),integer,,
 start_info_IHOMPOS_lower,"start breakend: PURPLE SV VCF INFO IHOMPOS: Position of inexact homology [first value, the lower offset]",integer,,
 start_info_IHOMPOS_upper,"start breakend: PURPLE SV VCF INFO IHOMPOS: Position of inexact homology [second value, the upper offset]",integer,,
-start_info_PURPLE_AF,"start breakend: PURPLE SV VCF INFO PURPLE_AF: Purity adjusted variant allelic frequency [this breakend's value: PURPLE writes [start, end] on the start record and [end, start] on the end record; the first value of the record is kept (checked against the mate's record)]",double,,
 start_info_REF,start breakend: PURPLE SV VCF INFO REF: Count of reads mapping across this breakend,integer,,
 start_info_REFPAIR,start breakend: PURPLE SV VCF INFO REFPAIR: Count of reference read pairs spanning this breakend supporting the reference allele,integer,,
 start_info_SEGALEN,start breakend: PURPLE SV VCF INFO SEGALEN: Aligned length of segment(s) in reference genome,integer,,
@@ -105,23 +142,14 @@ start_linx_bnd_id,"start breakend: LINX breakend.tsv column id, one value per tr
 start_linx_bnd_vcfId,"start breakend: LINX breakend.tsv column vcfId, one value per transcript, a list (in the TSV joined with |)",list<string>,|,start_linx_bnd_n
 start_linx_bnd_coords,"start breakend: LINX breakend.tsv column coords, one value per transcript, a list (in the TSV joined with |)",list<string>,|,start_linx_bnd_n
 start_linx_bnd_isStart,"start breakend: LINX breakend.tsv column isStart, one value per transcript, a list (in the TSV joined with |)",list<boolean>,|,start_linx_bnd_n
-start_linx_bnd_gene,"start breakend: LINX breakend.tsv column gene, one value per transcript, a list (in the TSV joined with |)",list<string>,|,start_linx_bnd_n
 start_linx_bnd_transcriptId,"start breakend: LINX breakend.tsv column transcriptId, one value per transcript, a list (in the TSV joined with |)",list<string>,|,start_linx_bnd_n
-start_linx_bnd_canonical,"start breakend: LINX breakend.tsv column canonical, one value per transcript, a list (in the TSV joined with |)",list<boolean>,|,start_linx_bnd_n
 start_linx_bnd_geneOrientation,"start breakend: LINX breakend.tsv column geneOrientation, one value per transcript, a list (in the TSV joined with |)",list<string>,|,start_linx_bnd_n
-start_linx_bnd_disruptive,"start breakend: LINX breakend.tsv column disruptive, one value per transcript, a list (in the TSV joined with |)",list<boolean>,|,start_linx_bnd_n
-start_linx_bnd_reportedStatus,"start breakend: LINX breakend.tsv column reportedStatus, one value per transcript, a list (in the TSV joined with |)",list<string>,|,start_linx_bnd_n
-start_linx_bnd_undisruptedCopyNumber,"start breakend: LINX breakend.tsv column undisruptedCopyNumber, one value per transcript, a list (in the TSV joined with |)",list<double>,|,start_linx_bnd_n
-start_linx_bnd_regionType,"start breakend: LINX breakend.tsv column regionType, one value per transcript, a list (in the TSV joined with |)",list<string>,|,start_linx_bnd_n
-start_linx_bnd_codingType,"start breakend: LINX breakend.tsv column codingType, one value per transcript, a list (in the TSV joined with |)",list<string>,|,start_linx_bnd_n
 start_linx_bnd_biotype,"start breakend: LINX breakend.tsv column biotype, one value per transcript, a list (in the TSV joined with |)",list<string>,|,start_linx_bnd_n
 start_linx_bnd_exonicBasePhase,"start breakend: LINX breakend.tsv column exonicBasePhase, one value per transcript, a list (in the TSV joined with |)",list<integer>,|,start_linx_bnd_n
 start_linx_bnd_nextSpliceExonRank,"start breakend: LINX breakend.tsv column nextSpliceExonRank, one value per transcript, a list (in the TSV joined with |)",list<integer>,|,start_linx_bnd_n
 start_linx_bnd_nextSpliceExonPhase,"start breakend: LINX breakend.tsv column nextSpliceExonPhase, one value per transcript, a list (in the TSV joined with |)",list<integer>,|,start_linx_bnd_n
 start_linx_bnd_nextSpliceDistance,"start breakend: LINX breakend.tsv column nextSpliceDistance, one value per transcript, a list (in the TSV joined with |)",list<integer>,|,start_linx_bnd_n
 start_linx_bnd_totalExonCount,"start breakend: LINX breakend.tsv column totalExonCount, one value per transcript, a list (in the TSV joined with |)",list<integer>,|,start_linx_bnd_n
-start_linx_bnd_exonUp,"start breakend: LINX breakend.tsv column exonUp, one value per transcript, a list (in the TSV joined with |)",list<integer>,|,start_linx_bnd_n
-start_linx_bnd_exonDown,"start breakend: LINX breakend.tsv column exonDown, one value per transcript, a list (in the TSV joined with |)",list<integer>,|,start_linx_bnd_n
 start_region_giab_alldifficult,start breakend: position in track giab_alldifficult: https://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/release/genome-stratifications/v3.6/GRCh38@all/Union/GRCh38_alldifficultregions.bed.gz,boolean,,
 start_region_giab_lowmap_segdup,start breakend: position in track giab_lowmap_segdup: https://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/release/genome-stratifications/v3.6/GRCh38@all/Union/GRCh38_alllowmapandsegdupregions.bed.gz,boolean,,
 start_region_giab_lowmappability,start breakend: position in track giab_lowmappability: https://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/release/genome-stratifications/v3.6/GRCh38@all/Mappability/GRCh38_lowmappabilityall.bed.gz,boolean,,
@@ -196,17 +224,11 @@ start_dbvar_nstd166_w100_n,"start breakend: number of sites of gnomAD-SV v2.1 (d
 start_dbvar_nstd166_w100_max_af,start breakend: highest AF among the sites of gnomAD-SV v2.1 (dbVar nstd166) (TRACK_DIR/dbvar_nstd166/sites.tsv.gz) with a breakpoint within 100 bases and FILTER PASS (or no FILTER),double,,
 start_dbvar_nstd200_w100_n,"start breakend: number of sites of CCDG, Abel 2020 (dbVar nstd200) (TRACK_DIR/dbvar_nstd200/sites.tsv.gz) with a breakpoint within 100 bases (any type, any FILTER)",integer,,
 start_dbvar_nstd200_w100_max_af,"start breakend: highest AF among the sites of CCDG, Abel 2020 (dbVar nstd200) (TRACK_DIR/dbvar_nstd200/sites.tsv.gz) with a breakpoint within 100 bases and FILTER PASS (or no FILTER)",double,,
-end_chrom,end breakend: VCF CHROM,string,,
-end_pos,end breakend: VCF POS,integer,,
-end_orient,"end breakend: derived from ALT: 1 if ALT starts with the reference base, else -1 (as ESVEE and LINX)",integer,,
 end_ref,end breakend: VCF REF,string,,
 end_alt,end breakend: VCF ALT,string,,
 end_vcf_order,end breakend: record number in the PURPLE SV VCF,integer,,
-end_info_CIPOS_lower,"end breakend: PURPLE SV VCF INFO CIPOS: Confidence interval around position [first value, the lower offset]",integer,,
-end_info_CIPOS_upper,"end breakend: PURPLE SV VCF INFO CIPOS: Confidence interval around position [second value, the upper offset]",integer,,
 end_info_INFERRED,end breakend: PURPLE SV VCF INFO INFERRED: Breakend inferred from copy number transition,boolean,,
 end_info_PURPLE_CN,"end breakend: PURPLE SV VCF INFO PURPLE_CN: Purity adjusted copy number surrounding variant location [this breakend's value: PURPLE writes [start, end] on the start record and [end, start] on the end record; the first value of the record is kept (checked against the mate's record)]",double,,
-end_info_PURPLE_CN_CHANGE,"end breakend: PURPLE SV VCF INFO PURPLE_CN_CHANGE: Purity adjusted change in copy number at each breakend [this breakend's value: PURPLE writes [start, end] on the start record and [end, start] on the end record; the first value of the record is kept (checked against the mate's record)]",double,,
 end_info_ASMSEG,end breakend: PURPLE SV VCF INFO ASMSEG: Segment indices in assembly(s) containing the breakend,integer,,
 end_info_BEAOR,end breakend: PURPLE SV VCF INFO BEAOR: Breakend orientation(s) in assembly(s),integer,,
 end_info_BEAPOS,end breakend: PURPLE SV VCF INFO BEAPOS: Breakend position(s) in assembly(s),integer,,
@@ -252,23 +274,14 @@ end_linx_bnd_id,"end breakend: LINX breakend.tsv column id, one value per transc
 end_linx_bnd_vcfId,"end breakend: LINX breakend.tsv column vcfId, one value per transcript, a list (in the TSV joined with |)",list<string>,|,end_linx_bnd_n
 end_linx_bnd_coords,"end breakend: LINX breakend.tsv column coords, one value per transcript, a list (in the TSV joined with |)",list<string>,|,end_linx_bnd_n
 end_linx_bnd_isStart,"end breakend: LINX breakend.tsv column isStart, one value per transcript, a list (in the TSV joined with |)",list<boolean>,|,end_linx_bnd_n
-end_linx_bnd_gene,"end breakend: LINX breakend.tsv column gene, one value per transcript, a list (in the TSV joined with |)",list<string>,|,end_linx_bnd_n
 end_linx_bnd_transcriptId,"end breakend: LINX breakend.tsv column transcriptId, one value per transcript, a list (in the TSV joined with |)",list<string>,|,end_linx_bnd_n
-end_linx_bnd_canonical,"end breakend: LINX breakend.tsv column canonical, one value per transcript, a list (in the TSV joined with |)",list<boolean>,|,end_linx_bnd_n
 end_linx_bnd_geneOrientation,"end breakend: LINX breakend.tsv column geneOrientation, one value per transcript, a list (in the TSV joined with |)",list<string>,|,end_linx_bnd_n
-end_linx_bnd_disruptive,"end breakend: LINX breakend.tsv column disruptive, one value per transcript, a list (in the TSV joined with |)",list<boolean>,|,end_linx_bnd_n
-end_linx_bnd_reportedStatus,"end breakend: LINX breakend.tsv column reportedStatus, one value per transcript, a list (in the TSV joined with |)",list<string>,|,end_linx_bnd_n
-end_linx_bnd_undisruptedCopyNumber,"end breakend: LINX breakend.tsv column undisruptedCopyNumber, one value per transcript, a list (in the TSV joined with |)",list<double>,|,end_linx_bnd_n
-end_linx_bnd_regionType,"end breakend: LINX breakend.tsv column regionType, one value per transcript, a list (in the TSV joined with |)",list<string>,|,end_linx_bnd_n
-end_linx_bnd_codingType,"end breakend: LINX breakend.tsv column codingType, one value per transcript, a list (in the TSV joined with |)",list<string>,|,end_linx_bnd_n
 end_linx_bnd_biotype,"end breakend: LINX breakend.tsv column biotype, one value per transcript, a list (in the TSV joined with |)",list<string>,|,end_linx_bnd_n
 end_linx_bnd_exonicBasePhase,"end breakend: LINX breakend.tsv column exonicBasePhase, one value per transcript, a list (in the TSV joined with |)",list<integer>,|,end_linx_bnd_n
 end_linx_bnd_nextSpliceExonRank,"end breakend: LINX breakend.tsv column nextSpliceExonRank, one value per transcript, a list (in the TSV joined with |)",list<integer>,|,end_linx_bnd_n
 end_linx_bnd_nextSpliceExonPhase,"end breakend: LINX breakend.tsv column nextSpliceExonPhase, one value per transcript, a list (in the TSV joined with |)",list<integer>,|,end_linx_bnd_n
 end_linx_bnd_nextSpliceDistance,"end breakend: LINX breakend.tsv column nextSpliceDistance, one value per transcript, a list (in the TSV joined with |)",list<integer>,|,end_linx_bnd_n
 end_linx_bnd_totalExonCount,"end breakend: LINX breakend.tsv column totalExonCount, one value per transcript, a list (in the TSV joined with |)",list<integer>,|,end_linx_bnd_n
-end_linx_bnd_exonUp,"end breakend: LINX breakend.tsv column exonUp, one value per transcript, a list (in the TSV joined with |)",list<integer>,|,end_linx_bnd_n
-end_linx_bnd_exonDown,"end breakend: LINX breakend.tsv column exonDown, one value per transcript, a list (in the TSV joined with |)",list<integer>,|,end_linx_bnd_n
 end_region_giab_alldifficult,end breakend: position in track giab_alldifficult: https://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/release/genome-stratifications/v3.6/GRCh38@all/Union/GRCh38_alldifficultregions.bed.gz,boolean,,
 end_region_giab_lowmap_segdup,end breakend: position in track giab_lowmap_segdup: https://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/release/genome-stratifications/v3.6/GRCh38@all/Union/GRCh38_alllowmapandsegdupregions.bed.gz,boolean,,
 end_region_giab_lowmappability,end breakend: position in track giab_lowmappability: https://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/release/genome-stratifications/v3.6/GRCh38@all/Mappability/GRCh38_lowmappabilityall.bed.gz,boolean,,
@@ -348,7 +361,6 @@ linx_vcfIdEnd,LINX svs.tsv column vcfIdEnd (as LINX wrote it),string,,
 linx_svId,LINX svs.tsv column svId (as LINX wrote it),integer,,
 linx_coordsStart,LINX svs.tsv column coordsStart (as LINX wrote it),string,,
 linx_coordsEnd,LINX svs.tsv column coordsEnd (as LINX wrote it),string,,
-linx_type,LINX svs.tsv column type (as LINX wrote it),string,,
 linx_clusterId,LINX svs.tsv column clusterId (as LINX wrote it),integer,,
 linx_clusterReason,LINX svs.tsv column clusterReason (as LINX wrote it),list<string>,;,
 linx_fragileSiteStart,LINX svs.tsv column fragileSiteStart (as LINX wrote it),boolean,,
@@ -366,20 +378,14 @@ linx_localTopologyStart,LINX svs.tsv column localTopologyStart (as LINX wrote it
 linx_localTopologyEnd,LINX svs.tsv column localTopologyEnd (as LINX wrote it),string,,
 linx_localTICountStart,LINX svs.tsv column localTICountStart (as LINX wrote it),integer,,
 linx_localTICountEnd,LINX svs.tsv column localTICountEnd (as LINX wrote it),integer,,
-linx_cluster_category,LINX clusters.tsv column category,string,,
 linx_cluster_synthetic,LINX clusters.tsv column synthetic,boolean,,
-linx_cluster_resolvedType,LINX clusters.tsv column resolvedType,string,,
-linx_cluster_clusterCount,LINX clusters.tsv column clusterCount,integer,,
 linx_cluster_clusterDesc,LINX clusters.tsv column clusterDesc,string,,
 linx_fusion_n,"LINX fusion.tsv column n for the fusions this SV takes part in (side: 5p or 3p), a list (in the TSV joined with |)",integer,,
 linx_fusion_side,"LINX fusion.tsv column side for the fusions this SV takes part in (side: 5p or 3p), a list (in the TSV joined with |)",list<string>,|,linx_fusion_n
 linx_fusion_fivePrimeBreakendId,"LINX fusion.tsv column fivePrimeBreakendId for the fusions this SV takes part in (side: 5p or 3p), a list (in the TSV joined with |)",list<integer>,|,linx_fusion_n
 linx_fusion_threePrimeBreakendId,"LINX fusion.tsv column threePrimeBreakendId for the fusions this SV takes part in (side: 5p or 3p), a list (in the TSV joined with |)",list<integer>,|,linx_fusion_n
 linx_fusion_name,"LINX fusion.tsv column name for the fusions this SV takes part in (side: 5p or 3p), a list (in the TSV joined with |)",list<string>,|,linx_fusion_n
-linx_fusion_reported,"LINX fusion.tsv column reported for the fusions this SV takes part in (side: 5p or 3p), a list (in the TSV joined with |)",list<boolean>,|,linx_fusion_n
-linx_fusion_reportedType,"LINX fusion.tsv column reportedType for the fusions this SV takes part in (side: 5p or 3p), a list (in the TSV joined with |)",list<string>,|,linx_fusion_n
 linx_fusion_reportableReasons,"LINX fusion.tsv column reportableReasons for the fusions this SV takes part in (side: 5p or 3p), a list (in the TSV joined with |)",list<string>,|,linx_fusion_n
-linx_fusion_phased,"LINX fusion.tsv column phased for the fusions this SV takes part in (side: 5p or 3p), a list (in the TSV joined with |)",list<string>,|,linx_fusion_n
 linx_fusion_likelihood,"LINX fusion.tsv column likelihood for the fusions this SV takes part in (side: 5p or 3p), a list (in the TSV joined with |)",list<string>,|,linx_fusion_n
 linx_fusion_fivePrimeVcfId,"LINX fusion.tsv column fivePrimeVcfId for the fusions this SV takes part in (side: 5p or 3p), a list (in the TSV joined with |)",list<string>,|,linx_fusion_n
 linx_fusion_threePrimeVcfId,"LINX fusion.tsv column threePrimeVcfId for the fusions this SV takes part in (side: 5p or 3p), a list (in the TSV joined with |)",list<string>,|,linx_fusion_n
@@ -413,8 +419,6 @@ linx_link_junctionCopyNumberUncertainty,"LINX links.tsv column junctionCopyNumbe
 linx_link_pseudogeneInfo,"LINX links.tsv column pseudogeneInfo for the links of this SV, a list (in the TSV joined with |)",list<string>,|,linx_link_n
 linx_link_ecDna,"LINX links.tsv column ecDna for the links of this SV, a list (in the TSV joined with |)",list<boolean>,|,linx_link_n
 linx_cluster_driver_n,"LINX drivers.tsv column n for the event's cluster, a list (in the TSV joined with |)",integer,,
-linx_cluster_driver_gene,"LINX drivers.tsv column gene for the event's cluster, a list (in the TSV joined with |)",list<string>,|,linx_cluster_driver_n
-linx_cluster_driver_eventType,"LINX drivers.tsv column eventType for the event's cluster, a list (in the TSV joined with |)",list<string>,|,linx_cluster_driver_n
 xs_pair_somatic_groups_w50,"number of other groups with the same two-breakend event (both breakends within 50 bases, same orientations, linked by MATEID) in their somatic set. Sets: somatic: PURPLE purple.sv.vcf.gz records without FILTER INFERRED; germline: PURPLE purple.sv.germline.vcf.gz records (groups with a matched normal); unfiltered: ESVEE esvee.unfiltered.vcf.gz records, any FILTER",integer,,
 xs_pair_somatic_group_list_w50,"those groups, a list (in the TSV joined with |). Sets: somatic: PURPLE purple.sv.vcf.gz records without FILTER INFERRED; germline: PURPLE purple.sv.germline.vcf.gz records (groups with a matched normal); unfiltered: ESVEE esvee.unfiltered.vcf.gz records, any FILTER",list<string>,|,
 xs_pair_germline_groups_w50,"number of other groups with the same two-breakend event (both breakends within 50 bases, same orientations, linked by MATEID) in their germline set. Sets: somatic: PURPLE purple.sv.vcf.gz records without FILTER INFERRED; germline: PURPLE purple.sv.germline.vcf.gz records (groups with a matched normal); unfiltered: ESVEE esvee.unfiltered.vcf.gz records, any FILTER",integer,,

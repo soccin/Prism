@@ -640,10 +640,16 @@ Each goes into its own folder; `TRACK_DIR/tracks.tsv` lists the source
 URL, download date and md5 of each, and the check of each GIAB file
 against the GIAB md5 list.
 
-`postOA.sh` runs two R scripts (`Rscript --vanilla`; packages
-`tidyverse`, `fs`, and for the second `GenomicRanges`, `IRanges`,
-`S4Vectors`). Both follow one rule: do not infer biology; faithfully
-preserve what is there.
+`postOA.sh` runs four steps: `scripts/postOA.R` (stacked LINX tables),
+`scripts/svCohort.R` (the SV event table as TSV),
+`scripts/tsvToParquet.py` (its typed Parquet copy) and
+`docs/scripts/checkSvCohort.R` (rebuilds the sources from the table and
+checks the Parquet copy). It needs `Rscript --vanilla` with `tidyverse`,
+`fs`, `nanoparquet`, `GenomicRanges`, `IRanges` and `S4Vectors`, and
+`python3` with `pyarrow`; it checks for `nanoparquet` and `pyarrow`
+before it starts. All steps follow one rule: do not infer biology;
+faithfully preserve what is there. Every assumption is checked on every
+row, and a failed check stops the job.
 
 `scripts/postOA.R`: for each kind of table it stacks the files of all
 groups into one `.tsv.gz` in `res/prism/db/data/`, with `group_id`
@@ -674,38 +680,67 @@ number of fields than its header. At the top of `res/prism/db/`:
 - `rows_per_sample.tsv`: the rows each group adds to each table
 
 `scripts/svCohort.R` writes `res/prism/db/sv_cohort_filtered.tsv.gz`,
-one row per somatic SV event:
+the core analysis table, one row per somatic SV event; step 3 writes
+the same table as `sv_cohort_filtered.parquet`, the file to analyze:
 
 - Rows: every record of each group's PURPLE `purple.sv.vcf.gz` (FILTER
   PASS, PON and INFERRED; nothing is left out). The two breakends of an
   SV (linked by `MATEID`) form one row, with the first in the VCF as the
   start; a single or inferred breakend forms one row. The script stops
   unless the events account for every VCF record.
-- Per breakend (`start_*`, `end_*`): the VCF fields, every INFO key
-  (`info_*`) and the FORMAT values of tumor and normal (`tumor_*`,
-  `normal_*`); every column of ESVEE's `esvee/<sample_id>.esvee.breakend.tsv`
+- Per event, without a prefix: the VCF, FORMAT and ESVEE fields that
+  have the same value on both breakends of every SV (`qual`, `filter`,
+  `info_SVTYPE`, `tumor_VF` and others; 36 listed in the script, 35 of
+  them present in the 2-group test), stored once (checked).
+- Per breakend (`start_*`, `end_*`): the other VCF fields, INFO keys
+  (`info_*`) and FORMAT values of tumor and normal (`tumor_*`,
+  `normal_*`); the columns of ESVEE's
+  `esvee/<sample_id>.esvee.breakend.tsv` that no VCF field repeats
   (`esvee_bnd_*`, joined on VCF ID = ESVEE `Id`; inferred breakends
-  have none); LINX's `breakend.tsv` rows for that end, one value per
-  transcript joined with `|` (`linx_bnd_*`); each region track
+  have none); LINX's `breakend.tsv` rows for that end, one list element
+  per transcript (`linx_bnd_*`); each region track
   (`region_*`: in the track or not, RepeatMasker name, class and family,
   ENCODE blacklist label, distance to the centromere model, Hartwig
   `sv_prep_blacklist` and `unmap_regions`); the number and list of
   other groups with a breakend at the same position, or within 50 bases,
   with the same orientation, in their PURPLE somatic, PURPLE germline
-  and ESVEE unfiltered calls (`xs_*`), and the same in the group's own
-  germline file (`own_germline_*`).
+  and ESVEE unfiltered calls (`xs_*`), and the number of such
+  breakends in the group's own germline file (`own_germline_*`).
 - Per event: the LINX `svs.tsv` row (`linx_*`, joined on `vcfIdStart`),
   its cluster (`linx_cluster_*`), fusions, links and cluster drivers
-  (joined with `|`), whether the same two-breakend event is in other
+  (lists), whether the same two-breakend event is in other
   groups (`xs_pair_*`), and derived columns (`n_breakends`, `in_linx`,
   `same_chrom`, `length`, coordinates). For some SVs whose two
   breakends share a position, LINX's start is the VCF end
   (`linx_start_is_vcf_start` FALSE); LINX's columns are kept as LINX
   wrote them.
 
-`res/prism/db/sv_cohort_filtered.columns.tsv` describes every column
-(from the VCF header where it has one) with its number of non-empty
-values. Both files are added to `manifest.tsv`.
+- Unpacked for analysis, each step checked on every row: fixed pairs
+  split into two columns (`AD` ref/alt, `CIPOS` and `IHOMPOS`
+  lower/upper, `TPR` five/three prime span); PURPLE's `PURPLE_AF`,
+  `PURPLE_CN` and `PURPLE_CN_CHANGE` reduced to each breakend's own
+  value (PURPLE writes both breakends' values on each record); lists
+  that always hold one value kept as one value; columns that repeat
+  another column dropped (most ESVEE columns, `MATEID`). A VCF `.` is
+  stored as empty.
+- Lists of 1 to N values (LINX transcripts, fusions, links, drivers,
+  RepeatMasker labels, group lists, VCF lists such as `ASMLNKS`, LINX
+  `svs.tsv` lists such as `clusterReason`) are arrays in the Parquet
+  file and joined with `|`, `,` or `;` in the TSV.
+
+`res/prism/db/sv_cohort_filtered.columns.tsv` gives every column its
+description (from the VCF header where it has one), type, list
+separator and count column, and its number of non-empty values.
+`scripts/tsvToParquet.py` converts every cell to that type (32-bit
+integers, so R reads them as integer) and stops on any value that does
+not fit. The last step, `docs/scripts/checkSvCohort.R`, undoes the
+unpacking, rebuilds every PURPLE VCF record and ESVEE row, compares
+them with the source files, and checks every Parquet cell against the
+TSV; the job fails if any check fails. The table, its Parquet copy and
+the dictionary are added to `manifest.tsv`. The exact definitions
+(event pairing, joins, unpacking rules and their sources, types, lists,
+coordinates, the 20 tracks, the cross-sample sets, the checks, how to
+read the Parquet file in R and Python) are in `docs/prism_methods.md`.
 
 The log `postOA.<jobid>.out` is moved to `OUT_DIR/logs/other/` at the
 end of the job. A rerun replaces the files. The job asks for 2 CPUs,

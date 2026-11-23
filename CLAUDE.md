@@ -32,8 +32,9 @@ sbatch ./Prism/runOncoanalyser.sh INPUT.csv [WORK_DIR]  # as a SLURM job
 sbatch ./Prism/qcCohort.sh [OUT_DIR]                    # QSEE over all groups into res/prism/qc/hmf/
 sbatch ./Prism/cohortReport.sh [-m MANIFEST] [-g GENES] [OUT_DIR]  # cohort report into res/prism/cohort/
 ./Prism/scripts/fetchTracks.sh [TRACK_DIR]              # once per site: region tracks for postOA.sh (login node, downloads only)
-sbatch ./Prism/postOA.sh [-t TRACK_DIR] [OUT_DIR]       # cohort tables into res/prism/db/: stacked LINX tables, SV event table
+sbatch ./Prism/postOA.sh [-t TRACK_DIR] [OUT_DIR]       # cohort tables into res/prism/db/: stacked LINX tables, SV event table (Parquet, TSV), checked
 Rscript --vanilla Prism/docs/scripts/checkLinx.R [OUT_DIR]  # recheck the LINX rows of docs/ACTUAL_METHODS.md
+Rscript --vanilla Prism/docs/scripts/checkSvCohort.R [OUT_DIR] [DB_DIR]  # rebuild the sources from sv_cohort_filtered and compare; check the Parquet copy (postOA.sh step 4)
 Rscript Prism/docs/dbScheme/scripts/fetchOrangeDatamodel.R orange-v5.0.1 DATAMODEL_DIR  # ORANGE data model sources
 Rscript Prism/docs/dbScheme/scripts/buildScheme.R --datamodel DATAMODEL_DIR --out-dir out  # rebuild docs/dbScheme tables
 ```
@@ -54,11 +55,13 @@ ORANGE computes is in its source code, not its data model; read
 the generated tables hold only all/some/none and counts, never sample
 names or values.
 
-`postOA.sh` has two steps, both writing to `res/prism/db/`. Rule for
-both (user decision): do not infer biology; faithfully preserve what is
-there. No record is removed and every field a tool wrote is kept;
-anything added is a documented extra column, and a confidence tier may
-only be a column, never a filter.
+`postOA.sh` has four steps, all writing to `res/prism/db/`. Rule for
+all (user decision): do not infer biology; faithfully preserve what is
+there. No record is removed and every value a tool wrote can be
+recovered exactly; anything added is a documented extra column, and a
+confidence tier may only be a column, never a filter. Errors never pass
+silently: every assumption is checked on every row and a failed check
+stops the run, naming the column.
 
 1. `scripts/postOA.R` stacks each per-sample table of every group into
    `data/<tool>_<mode>_<table>.tsv.gz` with `group_id` and `sample_id`
@@ -69,21 +72,50 @@ only be a column, never a filter.
    (description, source path), from which `manifest.tsv` is written;
    change the description there when a table or its checked behavior
    changes.
-2. `scripts/svCohort.R` writes `sv_cohort_filtered.tsv.gz`: one row per
-   event of PURPLE's somatic `purple.sv.vcf.gz` (all FILTER values),
-   with every VCF INFO/FORMAT field, every ESVEE `breakend.tsv` column
-   (joined on VCF ID = ESVEE `Id`), the LINX tables of step 1 (joined on
-   `vcfIdStart`; per-transcript, fusion, link and driver rows joined
-   with `|`), region tracks from `scripts/fetchTracks.sh`, and the same
-   breakends in other groups' PURPLE somatic, PURPLE germline and ESVEE
-   unfiltered calls. It writes `sv_cohort_filtered.columns.tsv` (every
-   column with its description, from the VCF header where there is
-   one) and adds both files to `manifest.tsv`. It stops if the events
-   do not account for every VCF record, LINX SV row and LINX breakend
-   row, or if an ESVEE row does not match its VCF record. GenomicRanges
-   is called through its namespace; attaching it masks `fs::path` and
-   dplyr verbs. A new column needs a branch in `describe()`; the run
-   warns about a column without a description.
+2. `scripts/svCohort.R` writes `sv_cohort_filtered.tsv.gz`, the core
+   analysis table: one row per event of PURPLE's somatic
+   `purple.sv.vcf.gz` (all FILTER values), with every VCF INFO/FORMAT
+   field, the ESVEE `breakend.tsv` columns (joined on VCF ID = ESVEE
+   `Id`), the LINX tables of step 1 (joined on `vcfIdStart`;
+   per-transcript, fusion, link and driver rows as lists), region
+   tracks from `scripts/fetchTracks.sh`, and the same breakends in
+   other groups' PURPLE somatic, PURPLE germline and ESVEE unfiltered
+   calls. The section "unpack, deduplicate, event-level columns"
+   reshapes it for analysis (user decisions), each rule checked on
+   every row: exact duplicate columns dropped (ESVEE columns repeating
+   VCF fields, StrandBias = FORMAT SB to two decimals, MATEID,
+   `vcf_normal_sample`); `PURPLE_AF`/`CN`/`CN_CHANGE` reduced to each
+   breakend's own value; fixed pairs split (AD ref/alt, CIPOS and
+   IHOMPOS lower/upper, TPR five/three prime span); lists that always
+   hold one value kept as scalars (a row with more stops the run);
+   fields equal on both breakends stored once as unprefixed event-level
+   columns. Lists of 1 to N values stay lists. VCF `.` is stored as
+   empty; the TSV is written without quoting. It writes
+   `sv_cohort_filtered.columns.tsv` (description, type, `list_sep`,
+   `list_count_column`, non-empty count; types from `column_type()`)
+   and adds the table, its Parquet copy and the dictionary to
+   `manifest.tsv`. GenomicRanges is called through its namespace;
+   attaching it masks `fs::path` and dplyr verbs. A new column needs a
+   branch in `describe()` and, if its type is not inferred correctly,
+   in `column_type()`; the run stops on a column without a description.
+3. `scripts/tsvToParquet.py` (python3, pyarrow) writes
+   `sv_cohort_filtered.parquet`, typed by the dictionary: int32
+   integers, lists as arrays, list lengths checked against the count
+   column. Any value that does not fit its type stops it (exit 1).
+4. `docs/scripts/checkSvCohort.R` undoes every unpacking rule, rebuilds
+   every VCF record and ESVEE row, compares them with the source files,
+   and checks every Parquet cell against the TSV (`parquet_equal`, with
+   nanoparquet). It exits 1 on any failure, which fails the job.
+
+`postOA.sh` checks before it starts that the R package `nanoparquet` is
+installed and that `python3` can import `pyarrow` (installed per user:
+`python3 -m pip install --user pyarrow`).
+
+`docs/prism_methods.md` is the methods record of every post-pipeline
+step: exact definitions taken from the code, for the client and for
+papers. When a post-pipeline script changes behavior, update its
+section there, and rerun `docs/scripts/checkSvCohort.R` after a change
+to `svCohort.R`.
 
 Post-pipeline layout (user decision): deliverables go under
 `res/prism/` in the folder that holds `out/` (the project folder), with
@@ -102,8 +134,9 @@ Checks after a change (there is no test suite):
 ```
 bash -n Prism/runOncoanalyser.sh Prism/deliverLocal.sh Prism/qcCohort.sh Prism/cohortReport.sh Prism/postOA.sh Prism/scripts/fetchTracks.sh Prism/docs/scripts/countVcfFilters.sh
 shellcheck -x Prism/runOncoanalyser.sh Prism/00.SETUP.sh Prism/deliverLocal.sh Prism/qcCohort.sh Prism/cohortReport.sh Prism/postOA.sh Prism/scripts/fetchTracks.sh Prism/docs/scripts/countVcfFilters.sh
-Rscript --vanilla -e "for (f in c('Prism/scripts/cohortReport.R', 'Prism/scripts/postOA.R', 'Prism/scripts/svCohort.R', 'Prism/docs/scripts/checkLinx.R')) invisible(parse(f))"
+Rscript --vanilla -e "for (f in c('Prism/scripts/cohortReport.R', 'Prism/scripts/postOA.R', 'Prism/scripts/svCohort.R', 'Prism/docs/scripts/checkLinx.R', 'Prism/docs/scripts/checkSvCohort.R')) invisible(parse(f))"
 Rscript --vanilla -e "for (f in Sys.glob('Prism/docs/dbScheme/scripts/*.R')) invisible(parse(f))"
+python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' Prism/scripts/tsvToParquet.py
 Prism/bin/nextflow lint Prism/conf/iris.config
 Prism/bin/nextflow -c Prism/conf/iris.config config -flat
 ```

@@ -6,7 +6,8 @@ does not set, and some are wrong. This file records what was checked
 against the code that ran and the files it wrote, step by step. Start
 here before describing methods in a paper or report.
 
-Tool names are explained in `OA_AlgoKey.md`.
+Tool names are explained in `OA_AlgoKey.md`. What Prism does after the
+pipeline (`postOA.sh` and later steps) is in `prism_methods.md`.
 
 ## Status labels
 
@@ -192,7 +193,8 @@ when it reads them:
 
 LINX makes no SV calls. It reads PURPLE's SV VCFs and copy number and
 annotates, clusters and chains the SVs. `postOA.sh` aggregates its
-tables. Recheck with:
+tables and joins them to the SV events (`prism_methods.md` section 1).
+Recheck with:
 
 ```
 Rscript --vanilla Prism/docs/scripts/checkLinx.R out

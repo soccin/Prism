@@ -128,25 +128,44 @@ All commands are run from the project folder.
      `links`, `breakend`, `fusion`, `drivers` and `driver_catalog` for
      every group; germline `svs`, `breakend`, `disruption`, `clusters`,
      `links` and `driver_catalog` for groups with a matched normal.
-   - `sv_cohort_filtered.tsv.gz`: one row per somatic SV event: every
-     record of PURPLE's `purple.sv.vcf.gz` (all FILTER values; nothing
-     left out). Each event has every field PURPLE (VCF INFO and FORMAT
-     of tumor and normal), ESVEE (`breakend.tsv`) and LINX (SV, cluster,
-     breakends per transcript, fusions, links, cluster drivers) wrote
-     for it, the region tracks at each breakend, and whether the same
-     breakend or pair is in other groups' calls. Values are copied, not
-     interpreted.
-   - `sv_cohort_filtered.columns.tsv`: the source and description of
-     every column of that table, and its number of non-empty values.
+   - `sv_cohort_filtered.parquet`: the SV event table, the core
+     analysis table. One row per somatic SV event: every record of
+     PURPLE's `purple.sv.vcf.gz` (all FILTER values; nothing left out),
+     with every field PURPLE (VCF INFO and FORMAT of tumor and normal),
+     ESVEE (`breakend.tsv`) and LINX (SV, cluster, breakends per
+     transcript, fusions, links, cluster drivers) wrote for it, the
+     region tracks at each breakend, and whether the same breakend or
+     pair is in other groups' calls. Unpacked for analysis: fixed pairs
+     (AD, CIPOS, IHOMPOS, TPR) split into two columns, fields equal on
+     both breakends stored once per event, columns that repeat another
+     column dropped, each step checked on every row. Typed (integer,
+     double, boolean, string); lists of any length are arrays. In R,
+     `source("Prism/examples/readSvCohort.R")` loads it as `sv` with
+     its dictionary `sv_dict` and helpers for the list columns
+     (`sv_find()`, `sv_transcripts()`, `sv_fusions()`, `sv_links()`,
+     `sv_cluster_drivers()`); in Python, read it with pyarrow or
+     polars.
+   - `sv_cohort_filtered.tsv.gz`: the same table as text; lists joined
+     with `|` (VCF lists with `,`, LINX `svs.tsv` lists with `;`).
+   - `sv_cohort_filtered.columns.tsv`: for every column of that table,
+     its description, type, list separator and count column, and its
+     number of non-empty values.
    - `manifest.tsv` (what each file holds, where it comes from, its
      groups and rows), `samples.tsv` (tumor, normal, run mode and LINX
      version per group) and `rows_per_sample.tsv`.
 
-   It stops if a file is missing, if the files of a table do not match,
-   or if the SV events do not account for every PURPLE record and LINX
-   row. It needs `Rscript` with `tidyverse`, `fs` and the Bioconductor
-   packages `GenomicRanges`, `IRanges` and `S4Vectors`. A rerun
-   replaces the files.
+   As its last step it rebuilds every PURPLE VCF record and ESVEE row
+   from the table and checks the Parquet file against the TSV
+   (`docs/scripts/checkSvCohort.R`). It stops if a file is missing, if
+   the files of a table do not match, if the SV events do not account
+   for every PURPLE record and LINX row, if an unpacking step finds a
+   row that breaks its assumption, if a value does not fit its column's
+   type, or if a check fails. It needs `Rscript` with `tidyverse`, `fs`,
+   `nanoparquet` and the Bioconductor packages `GenomicRanges`,
+   `IRanges` and `S4Vectors`, and `python3` with `pyarrow`. A rerun
+   replaces the files. The definitions of the columns (events, joins,
+   unpacking rules, types, region tracks, cross-sample counts) are in
+   `docs/prism_methods.md`.
 
 Outputs go to the project folder, not to `Prism/`:
 
@@ -212,8 +231,9 @@ Prism/
     cohortReport.R           builds the cohort report (run by cohortReport.sh)
     postOA.R                 stacks the LINX tables (run by postOA.sh)
     svCohort.R               builds the SV event table (run by postOA.sh)
+    tsvToParquet.py          writes its typed Parquet copy (run by postOA.sh)
     fetchTracks.sh           downloads the region tracks postOA.sh uses
-  examples/             templates for mapping.csv and manifest.csv
+  examples/             templates for mapping.csv and manifest.csv; readSvCohort.R (R bootstrap for the SV table)
   docs/                 pipeline instructions and notes
     dbScheme/           which file holds each per-sample value
 ```
@@ -260,6 +280,10 @@ are not removed automatically.
   step, checked against the code and the run's own logs and files,
   where it differs from the tool READMEs, and how to check it again
   (`docs/scripts/countVcfFilters.sh`, `docs/scripts/checkLinx.R`)
+- `docs/prism_methods.md`: what Prism does after the pipeline
+  (`postOA.sh` so far): exact definitions of every derived column of
+  the cohort tables, the region tracks, the checks, and how to recheck
+  them (`docs/scripts/checkSvCohort.R`)
 - `docs/LINX_tables.md`: why LINX writes seven somatic SV tables,
   what one row of each is, how they link, and R examples on the
   `res/prism/db` tables

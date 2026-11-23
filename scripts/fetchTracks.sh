@@ -20,7 +20,7 @@ TRACK_DIR=${TRACK_DIR%/}
 GIAB=https://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/release/genome-stratifications/v3.6/GRCh38@all
 UCSC=https://hgdownload.soe.ucsc.edu/goldenPath/hg38/database
 
-# name<TAB>URL. The names are the column stems postOA.R uses.
+# name<TAB>URL. The names are the column stems svCohort.R uses.
 TRACKS=$(cat <<EOF
 giab_alldifficult	$GIAB/Union/GRCh38_alldifficultregions.bed.gz
 giab_lowmap_segdup	$GIAB/Union/GRCh38_alllowmapandsegdupregions.bed.gz

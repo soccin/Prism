@@ -763,6 +763,7 @@ Over the whole table:
 
 | Check | What it compares |
 |---|---|
+| `linx_tables_equal` | every LINX value in the table, as text, against the stacked LINX tables (`data/linx_somatic_*.tsv.gz`), each source row exactly once and nothing extra: the `linx_*` columns against `svs`; the `linx_cluster_*` columns, once per cluster, against `clusters`; the per-transcript rows rebuilt from the start and end lists against `breakend`; the fusions from their 5' side and from their 3' side, each on the SV of LINX's breakend ID, against `fusion`; the links from the lower and from the upper SV against `links`; the drivers of each event's cluster against `drivers` (the same list on every event of a cluster; drivers with no SV cluster are counted, not in the table) |
 | `parquet_equal` | every cell of the Parquet file equals the TSV cell converted to the dictionary type, by a separate implementation in R (nanoparquet) of the conversion in `tsvToParquet.py`; lists compared element by element. Doubles are compared to 1 part in a million (`same_values()`): R's `as.numeric` does not always give the nearest double (`5.754e-03` lands one unit in the last place from the value pyarrow and Python give, checked with exact arithmetic). Conversion errors, which this check is for, are far larger; every other type must be identical |
 
 It also prints the dictionary's type counts, the columns empty in every
@@ -787,7 +788,12 @@ the region and cross-sample columns.
   `parquet_equal` was TRUE. Column types: string 48, integer 122,
   double 19, boolean 52, `list<string>` 56, `list<integer>` 33,
   `list<double>` 4, `list<boolean>` 12. One column was empty in every
-  row (`end_info_INFERRED`). The cohort includes the two cases the
+  row (`end_info_INFERRED`). `linx_tables_equal` was added afterwards
+  and run on this table (job 13239483, log
+  `out/logs/other/checkSvCohort.13239483.out`): every LINX table check
+  TRUE; 23 LINX driver rows belong to no event's cluster and are not in
+  the table. A deliberately changed gene name in a copy of the 2-group
+  table made the check fail on that row. The cohort includes the two cases the
   2-group test lacks: SVs with both breakends at identical coordinates
   (4 INV; their LINX breakend rows are each placed once, on the end
   given by `isStart`) and 4 single-breakend events with 5 LINX end

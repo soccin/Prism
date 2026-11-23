@@ -288,6 +288,116 @@ check_group <- function(group_id, sample_id, normal_id, ...) {
   )
 }
 
+# ---- LINX tables = the table's LINX columns ----------------------------------
+#
+# Every LINX value in the table, compared as text with the stacked LINX
+# tables of postOA.R (data/linx_somatic_*.tsv.gz), row for row: each source
+# row must come back exactly once (as a multiset), with nothing extra.
+
+lx <- c("svs", "clusters", "breakend", "fusion", "links", "drivers") |>
+  set_names() |>
+  map(\(t) read_chr(path(db_dir, "data", str_c("linx_somatic_", t, ".tsv.gz"))))
+
+# Same rows, as multisets: same columns, same rows with the same counts.
+same_rows <- function(a, b, what) {
+  b <- b |> select(all_of(names(a)))
+  key <- \(d) d |> arrange(across(everything())) |> as.data.frame()
+  ok <- nrow(a) == nrow(b) && identical(key(a), key(b))
+  if (!ok) {
+    message(what, ": table rows ", nrow(a), ", LINX rows ", nrow(b), "; examples that differ:")
+    print(head(bind_rows(table = anti_join(a, b, by = names(a)), linx = anti_join(b, a, by = names(a)), .id = "in"), 6))
+  }
+  ok
+}
+
+# The |-lists of the columns starting with PREFIX, one row per element,
+# with the columns of KEEP; PREFIX removed from the names.
+unnest_lists <- function(e, prefix, keep) {
+  count_col <- str_c(prefix, "n")
+  cols <- setdiff(str_subset(names(e), str_c("^", prefix)), count_col)
+  e <- e |> filter(.data[[count_col]] != "")
+  n <- as.integer(e[[count_col]])
+  long <- map(set_names(cols), \(c) {
+    v <- str_split(e[[c]], fixed("|"))
+    v <- map2(v, n, \(x, k) if (length(x) == k) x else stop(str_glue("{c}: list length differs from {count_col}")))
+    unlist(v)
+  })
+  e |>
+    select(all_of(keep)) |>
+    slice(rep(seq_len(nrow(e)), n)) |>
+    bind_cols(as_tibble(long)) |>
+    rename_with(\(x) str_remove(x, str_c("^", prefix)), all_of(cols))
+}
+
+check_linx <- function() {
+  in_lx <- ev |> filter(in_linx == "TRUE")
+  res <- list()
+
+  # svs.tsv: the linx_* columns of every LINX event.
+  svs_cols <- setdiff(names(lx$svs), c("group_id", "sample_id"))
+  res$svs <- same_rows(
+    in_lx |> select(group_id, sample_id, all_of(str_c("linx_", svs_cols))) |>
+      rename_with(\(x) str_remove(x, "^linx_"), -c(group_id, sample_id)),
+    lx$svs, "LINX svs"
+  )
+
+  # clusters.tsv: the linx_cluster_* columns, once per cluster.
+  cl_cols <- setdiff(names(lx$clusters), c("group_id", "sample_id", "clusterId"))
+  res$clusters <- same_rows(
+    in_lx |>
+      distinct(group_id, sample_id, clusterId = linx_clusterId, across(all_of(str_c("linx_cluster_", cl_cols)))) |>
+      rename_with(\(x) str_remove(x, "^linx_cluster_"), starts_with("linx_cluster_")),
+    lx$clusters, "LINX clusters"
+  )
+
+  # breakend.tsv: start and end lists together, svId from the event.
+  bnd <- bind_rows(
+    unnest_lists(in_lx, "start_linx_bnd_", c("group_id", "sample_id", svId = "linx_svId")),
+    unnest_lists(in_lx, "end_linx_bnd_", c("group_id", "sample_id", svId = "linx_svId"))
+  )
+  res$breakend <- same_rows(bnd, lx$breakend, "LINX breakend")
+
+  # fusion.tsv: listed on the SV of the 5' breakend (side 5p) and of the 3'
+  # breakend (3p); each side must give every fusion once, on the right SV.
+  fus <- unnest_lists(in_lx, "linx_fusion_", c("group_id", "sample_id", svId = "linx_svId"))
+  bnd_sv <- lx$breakend |> select(group_id, sample_id, id, bnd_sv = svId)
+  for (s in c("5p", "3p")) {
+    id_col <- if (s == "5p") "fivePrimeBreakendId" else "threePrimeBreakendId"
+    f <- fus |> filter(side == s)
+    on_sv <- f |>
+      left_join(bnd_sv, by = c("group_id", "sample_id", setNames("id", id_col))) |>
+      summarize(ok = all(!is.na(bnd_sv) & bnd_sv == svId)) |>
+      pull(ok)
+    res[[str_c("fusion_", s)]] <- on_sv &&
+      same_rows(f |> select(-svId, -side), lx$fusion, str_c("LINX fusion (", s, ")"))
+  }
+
+  # links.tsv: listed on lowerSvId, and on upperSvId when it differs.
+  lnk <- unnest_lists(in_lx, "linx_link_", c("group_id", "sample_id", svId = "linx_svId"))
+  res$links_on_sv <- all(lnk$svId == lnk$lowerSvId | lnk$svId == lnk$upperSvId)
+  res$links_lower <- same_rows(lnk |> filter(svId == lowerSvId) |> select(-svId), lx$links, "LINX links (lower)")
+  res$links_upper <- same_rows(
+    lnk |> filter(svId == upperSvId, upperSvId != lowerSvId) |> select(-svId),
+    lx$links |> filter(upperSvId != lowerSvId), "LINX links (upper)"
+  )
+
+  # drivers.tsv: the drivers of the event's cluster, once per cluster;
+  # drivers outside any cluster (clusterId -1) belong to no event.
+  one_per_cluster <- in_lx |> distinct(group_id, sample_id, linx_clusterId, .keep_all = TRUE)
+  drv <- unnest_lists(one_per_cluster, "linx_cluster_driver_", c("group_id", "sample_id", clusterId = "linx_clusterId"))
+  same_lists <- in_lx |>
+    summarize(n = n_distinct(linx_cluster_driver_gene, linx_cluster_driver_eventType), .by = c(group_id, sample_id, linx_clusterId))
+  if (any(same_lists$n > 1)) message("LINX drivers: events of one cluster carry different driver lists")
+  res$drivers_same_in_cluster <- all(same_lists$n == 1)
+  drv_src <- lx$drivers |> semi_join(in_lx, by = c("group_id", "sample_id", clusterId = "linx_clusterId"))
+  res$drivers <- same_rows(drv, drv_src, "LINX drivers")
+  message("LINX drivers outside any event's cluster (not in the table): ", nrow(lx$drivers) - nrow(drv_src))
+
+  res <- unlist(res)
+  print(res)
+  all(res)
+}
+
 # ---- Parquet copy = TSV, typed by the dictionary ---------------------------
 
 typed <- function(x, type) {
@@ -351,9 +461,11 @@ checks <- c(
   "records_once", "fields_equal", "info_equal", "format_equal", "esvee_equal", "linx_ok",
   "linx_bnd_coords_ok"
 )
+linx_ok <- check_linx()
+message("linx_tables_equal: ", linx_ok)
 pq_ok <- parquet_equal()
 message("parquet_equal: ", pq_ok)
-all_pass <- all(as.matrix(res[checks])) && pq_ok
+all_pass <- all(as.matrix(res[checks])) && linx_ok && pq_ok
 message("all checks pass: ", all_pass)
 
 message("events by breakends, LINX and FILTER:")

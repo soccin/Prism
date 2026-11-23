@@ -7,7 +7,7 @@
 #SBATCH -o postOA.%j.out
 
 # Prism: cohort tables of a finished oncoanalyser run, for analysis over
-# the cohort. Two steps:
+# the cohort. Four steps:
 #   1. scripts/postOA.R stacks the per-sample LINX tables of every group
 #      into one table each, with the group and the sample in front. Lines
 #      are copied as LINX wrote them: no row is left out and no value is
@@ -16,7 +16,14 @@
 #      groups: every record of PURPLE's purple.sv.vcf.gz (all FILTER
 #      values), one row per event, with every field PURPLE, ESVEE and LINX
 #      wrote for it, region tracks (TRACK_DIR) and the same breakends in
-#      other groups. Nothing is left out or interpreted.
+#      other groups, unpacked for analysis (fixed pairs split, repeated
+#      columns dropped; each step checked). No row is left out and no
+#      value is interpreted.
+#   3. scripts/tsvToParquet.py (python3 with pyarrow) writes the typed
+#      Parquet copy of that table, with the types in its column dictionary.
+#   4. docs/scripts/checkSvCohort.R rebuilds every PURPLE VCF record and
+#      ESVEE row from the table and checks the Parquet copy; the job fails
+#      if any check fails.
 # Run it from the project directory, as a job or on a compute node:
 #   sbatch ./Prism/postOA.sh [-t TRACK_DIR] [OUT_DIR]
 #   ./Prism/postOA.sh [-t TRACK_DIR] [OUT_DIR]
@@ -28,11 +35,17 @@
 #   samples.tsv          one row per group: group_id, sample_id (tumor),
 #                        normal_id, run_mode, linx_version
 #   rows_per_sample.tsv  the number of rows each group adds to each table
+#   sv_cohort_filtered.parquet
+#                        one row per somatic SV event (steps 2, 3), typed;
+#                        lists as arrays. Read with nanoparquet (R),
+#                        pyarrow or polars (Python)
 #   sv_cohort_filtered.tsv.gz
-#                        one row per somatic SV event (step 2)
+#                        the same table as text; lists joined with | (VCF
+#                        lists with ,)
 #   sv_cohort_filtered.columns.tsv
-#                        its column dictionary: source and description of
-#                        every column, and the number of non-empty values
+#                        its column dictionary: description, type, list
+#                        separator and count column, and the number of
+#                        non-empty values of every column
 #   data/linx_somatic_<table>.tsv.gz
 #                        every group: svs, clusters, links, breakend,
 #                        fusion, drivers, driver_catalog
@@ -43,8 +56,10 @@
 # columns of the LINX file (see the LINX README). LINX's neoepitope and
 # vis_* files are not aggregated. The job stops if a file is missing, if
 # the files of a table have different headers, if a line has a different
-# number of fields than its header, or if the SV events do not account for
-# every PURPLE record and LINX row.
+# number of fields than its header, if the SV events do not account for
+# every PURPLE record and LINX row, if an unpacking step finds a row that
+# breaks its assumption, if a value does not fit its column's type, or if
+# a check of step 4 fails.
 # The Hartwig resource folder (sv_prep_blacklist, unmap_regions) is read
 # from ref_data_hmf_data_path in the newest OUT_DIR/pipeline_info/params_*.json.
 # Logs go to OUT_DIR/logs/other, with the pipeline's own:
@@ -63,8 +78,10 @@ Usage: sbatch ./Prism/postOA.sh [-t TRACK_DIR] [OUT_DIR]
 Write the cohort tables of an oncoanalyser output folder into
 ROOT/res/prism/db, where ROOT is the folder that holds OUT_DIR: the
 stacked LINX tables (data/*.tsv.gz) and one table of the somatic SV
-events (sv_cohort_filtered.tsv.gz). Start it from the project directory;
-run it directly only on a compute node.
+events (sv_cohort_filtered.parquet and .tsv.gz), checked against its
+sources. Needs Rscript (tidyverse, fs, GenomicRanges, nanoparquet) and
+python3 with pyarrow. Start it from the project directory; run it
+directly only on a compute node.
 
   -t TRACK_DIR region tracks from scripts/fetchTracks.sh
                (default: $DEFAULT_TRACK_DIR)
@@ -155,6 +172,14 @@ if ! command -v Rscript >/dev/null; then
     echo "Rscript not found on PATH" >&2
     exit 1
 fi
+if ! Rscript --vanilla -e 'quit(status = !requireNamespace("nanoparquet", quietly = TRUE))'; then
+    echo "R package nanoparquet not installed (needed by checkSvCohort.R)" >&2
+    exit 1
+fi
+if ! python3 -c 'import pyarrow' 2>/dev/null; then
+    echo "python3 with pyarrow not found (python3 -m pip install --user pyarrow)" >&2
+    exit 1
+fi
 
 # Never write to the node's /tmp. A new folder per run (mktemp), as in
 # runOncoanalyser.sh. No automatic cleanup.
@@ -183,6 +208,13 @@ Rscript --vanilla "$PDIR/scripts/svCohort.R" \
     --db-dir "$RES_DIR" \
     --track-dir "$TRACK_DIR" \
     --hmf-dir "$HMF_DIR"
+
+python3 "$PDIR/scripts/tsvToParquet.py" \
+    "$RES_DIR/sv_cohort_filtered.tsv.gz" \
+    "$RES_DIR/sv_cohort_filtered.columns.tsv" \
+    "$RES_DIR/sv_cohort_filtered.parquet"
+
+Rscript --vanilla "$PDIR/docs/scripts/checkSvCohort.R" "$OUT_DIR" "$RES_DIR"
 
 echo "Tables in $RES_DIR"
 echo "Logs in $LOG_DIR"

@@ -3,7 +3,20 @@
 # the pipeline wrote for them and technical evidence columns. Called by
 # postOA.sh after postOA.R; see that script for the usage and the output.
 #
-#   Rscript svCohort.R --out-dir OUT --db-dir DB --track-dir TRACKS --hmf-dir HMF
+#   Rscript svCohort.R --out-dir OUT --db-dir DB --track-dir TRACKS --hmf-dir HMF \
+#     --bam-dir BAMS --dict-ref REF
+#
+# BAMS holds the read counts of bamEvidence.sh (one file per tumor and
+# normal). TRACKS holds the region tracks and the population SV call sets
+# (fetchTracks.sh, popSvSites.sh).
+#
+# REF is the reference copy of the column dictionary in the repo
+# (docs/sv_cohort_filtered.columns.csv, without the cohort-specific
+# non_empty column; CSV because people read it). The build stops if the
+# new dictionary differs from it in any column, order, description, type
+# or list field; it then writes the new one as
+# DB/sv_cohort_filtered.columns.new.csv to review and copy over REF, and
+# writes no table.
 #
 # Rows: every record of PURPLE's purple.sv.vcf.gz of every group (FILTER
 # PASS, PON, INFERRED; nothing is left out), one row per event. The two
@@ -23,10 +36,15 @@
 #                     (linx_bnd_*, one list element per transcript), region
 #                     tracks (region_*), and the same breakend in other
 #                     groups (xs_*) and in the group's own germline file
-#                     (own_germline_*)
+#                     (own_germline_*), read counts recounted from the
+#                     BAMs (bam_*), and population SV sites near the
+#                     breakend (<source>_w100_*)
 #   linx_*            the LINX svs.tsv row, its cluster, and lists of its
 #                     links, fusions and cluster drivers
 #   xs_pair_*         the same two-breakend event in other groups
+#   <source>_bp100_*, <source>_ro50_*
+#                     the same event in a population SV call set, by
+#                     breakpoints or by reciprocal overlap
 # A cell holds one value, except where the source holds a list of any
 # length; lists are joined with "|" (VCF lists with ",") in source order.
 # Fixed pairs (AD, CIPOS, IHOMPOS, TPR) are split into two columns; columns
@@ -59,7 +77,7 @@ XS_WINDOW <- 50
 # ---- arguments ---------------------------------------------------------
 
 parse_args <- function(args) {
-  opts <- list(out_dir = NULL, db_dir = NULL, track_dir = NULL, hmf_dir = NULL)
+  opts <- list(out_dir = NULL, db_dir = NULL, track_dir = NULL, hmf_dir = NULL, bam_dir = NULL, dict_ref = NULL)
   i <- 1
   while (i <= length(args)) {
     key <- args[i] |> str_remove("^--") |> str_replace_all("-", "_")
@@ -81,6 +99,10 @@ out_dir <- path_abs(opts$out_dir)
 db_dir <- path_abs(opts$db_dir)
 track_dir <- path_abs(opts$track_dir)
 hmf_dir <- path_abs(opts$hmf_dir)
+bam_dir <- path_abs(opts$bam_dir)
+if (!dir_exists(bam_dir)) stop(str_glue("--bam-dir not found: {bam_dir} (run bamEvidence.sh)"), call. = FALSE)
+dict_ref_file <- path_abs(opts$dict_ref)
+if (!file_exists(dict_ref_file)) stop(str_glue("--dict-ref not found: {dict_ref_file}"), call. = FALSE)
 out_file <- path(db_dir, "sv_cohort_filtered.tsv.gz")
 dict_file <- path(db_dir, "sv_cohort_filtered.columns.tsv")
 
@@ -598,6 +620,251 @@ for (n in names(sets)) {
   events[[col_l]][pairs$row] <- pairs$list
 }
 
+# ---- BAM evidence --------------------------------------------------------
+#
+# Read counts at every breakend in every BAM of the run, from
+# scripts/bamEvidence.py (bamEvidence.sh): BAM_DIR/<sample>.bam_evidence.tsv.gz,
+# one file per tumor and normal of samples.tsv, each with one row per
+# PURPLE record of every group. Per breakend: the counts in the group's
+# own tumor (bam_tumor_*), in its own normal (bam_normal_*; empty for
+# tumor-only groups), and summaries over the other normals and the other
+# tumors (bam_other_normals_*, bam_other_tumors_*).
+
+log_msg("BAM evidence from {bam_dir}")
+BAM_METRICS <- c(
+  "depth", "mapq_mean", "mapq0_frac", "softclip_frac_w50", "clip_n", "split_n", "disc_n",
+  "improper_frac_w1000", "support_mapq_mean"
+)
+bam_samples <- bind_rows(
+  samples |> transmute(group_id, sample_id, role = "tumor"),
+  samples |> filter(!is.na(normal_id) & normal_id != "") |> transmute(group_id, sample_id = normal_id, role = "normal")
+)
+bam_files <- dir_ls(bam_dir, glob = "*.bam_evidence.tsv.gz")
+extra <- setdiff(path_file(bam_files), str_c(bam_samples$sample_id, ".bam_evidence.tsv.gz"))
+if (length(extra) > 0) stop("BAM evidence files for samples not in samples.tsv: ", str_c(extra, collapse = ", "), call. = FALSE)
+point_ids <- points |>
+  mutate(id = if_else(side == "start", events$start_id[row], events$end_id[row]))
+# Every PURPLE record of the cohort, as the key set each file must hold.
+record_keys <- str_c(point_ids$group_id, ":", point_ids$id)
+stopifnot(!anyDuplicated(record_keys))
+bam <- bam_samples |>
+  pmap(\(group_id, sample_id, role) {
+    file <- path(bam_dir, str_c(sample_id, ".bam_evidence.tsv.gz"))
+    if (!file_exists(file)) stop(str_glue("BAM evidence missing for {sample_id}: {file}"), call. = FALSE)
+    b <- read_chr(file)
+    if (!identical(names(b), c("group_id", "id", BAM_METRICS))) {
+      stop(str_glue("Unexpected columns in {file}: {str_c(names(b), collapse = ',')}"), call. = FALSE)
+    }
+    keys <- str_c(b$group_id, ":", b$id)
+    if (anyDuplicated(keys) || !setequal(keys, record_keys) || length(keys) != length(record_keys)) {
+      stop(str_glue(
+        "{file}: rows do not match the cohort's PURPLE records one to one ",
+        "({length(keys)} rows, {length(record_keys)} records, {length(setdiff(record_keys, keys))} missing)"
+      ), call. = FALSE)
+    }
+    # .env: b has its own group_id column (the record's group).
+    b |> mutate(bam_sample = .env$sample_id, bam_group = .env$group_id, bam_role = .env$role)
+  }) |>
+  list_rbind() |>
+  mutate(
+    across(all_of(BAM_METRICS), \(x) as.numeric(na_if(x, "NA"))),
+    across(c(depth, clip_n, split_n, disc_n), as.integer)
+  )
+log_msg("  {n_distinct(bam$bam_sample)} BAMs, {nrow(bam)} rows")
+
+bam_pts <- point_ids |> select(row, side, group_id, id)
+own <- function(r) {
+  bam |>
+    filter(bam_role == r, bam_group == group_id) |>
+    select(group_id, id, all_of(BAM_METRICS)) |>
+    rename_with(\(x) str_c("bam_", r, "_", x), all_of(BAM_METRICS))
+}
+# Over the BAMs of a role from other groups: the number of BAMs, and the
+# number of them with at least one clipped, split or spanning read, and the
+# split and spanning reads summed.
+others <- function(r, label) {
+  bam |>
+    filter(bam_role == r) |>
+    inner_join(bam_pts |> select(group_id, id), by = c("group_id", "id")) |>
+    filter(bam_group != group_id) |>
+    summarize(
+      n = n(),
+      clip_samples = sum(clip_n > 0, na.rm = TRUE),
+      split_samples = sum(split_n > 0, na.rm = TRUE),
+      disc_samples = sum(disc_n > 0, na.rm = TRUE),
+      split_reads = sum(split_n, na.rm = TRUE),
+      disc_reads = sum(disc_n, na.rm = TRUE),
+      .by = c(group_id, id)
+    ) |>
+    rename_with(\(x) str_c("bam_", label, "_", x), -c(group_id, id))
+}
+bam_cols <- bam_pts |>
+  left_join(own("tumor"), by = c("group_id", "id"), relationship = "one-to-one") |>
+  left_join(own("normal"), by = c("group_id", "id"), relationship = "one-to-one") |>
+  left_join(others("normal", "other_normals"), by = c("group_id", "id"), relationship = "one-to-one") |>
+  left_join(others("tumor", "other_tumors"), by = c("group_id", "id"), relationship = "one-to-one")
+stopifnot(
+  nrow(bam_cols) == nrow(points), identical(bam_cols$row, points$row), identical(bam_cols$side, points$side),
+  !anyNA(bam_cols$bam_tumor_depth)
+)
+# A breakend with no mate has no split or spanning reads: their summaries
+# over other samples are empty, not 0.
+no_mate <- is.na(bam_cols$bam_tumor_split_n)
+for (col in str_subset(names(bam_cols), "^bam_other_\\w+_(split|disc)_")) bam_cols[[col]][no_mate] <- NA
+no_disc <- is.na(bam_cols$bam_tumor_disc_n)
+for (col in str_subset(names(bam_cols), "^bam_other_\\w+_disc_")) bam_cols[[col]][no_disc] <- NA
+# Groups without a normal: bam_other_normals_n counts all normals.
+events <- add_point_cols(events, bam_cols |> select(-group_id, -id))
+rm(bam)
+
+# ---- population SV call sets ---------------------------------------------
+#
+# Short-read population SV call sets (fetchTracks.sh; reduced by
+# popSvSites.sh to TRACK_DIR/<source>/sites.tsv.gz). A site has a first
+# breakpoint (chrom, pos) and, where the source gives one, a second: chr2
+# (or chrom) at end2 (or end).
+#   per breakend: {side}_{source}_w{POP_WINDOW}_n, the sites with a
+#     breakpoint within POP_WINDOW bases (any type, any FILTER), and
+#     _max_af, their highest AF among sites with FILTER PASS or none
+#   per two-breakend event:
+#     {source}_bp{POP_WINDOW}_*: sites whose two breakpoints are within
+#       POP_WINDOW bases of the event's two breakends (either way round),
+#       of a type in POP_TYPES for the event's SVTYPE
+#     {source}_ro50_*: DEL, DUP and INV events: sites on the same
+#       chromosome of a type in POP_RO_TYPES whose interval [pos, end]
+#       overlaps the event's [start, end] by at least half of the longer
+#       of the two
+#     each: _n (sites, any FILTER), _n_pass (FILTER PASS or none), _ids
+#     (list), _max_af (highest AF among the PASS sites)
+
+POP_SOURCES <- c(
+  gnomad_sv = "gnomAD-SV v4.1 sites", kgp_sv = "1000 Genomes high-coverage SV call set (3,202 samples)",
+  dbvar_nstd166 = "gnomAD-SV v2.1 (dbVar nstd166)", dbvar_nstd200 = "CCDG, Abel 2020 (dbVar nstd200)"
+)
+POP_WINDOW <- 100
+POP_TYPES <- list(
+  DEL = c("DEL", "CNV", "BND"), DUP = c("DUP", "CNV", "BND"), INV = c("INV", "BND"),
+  INS = c("INS"), BND = c("BND", "CTX")
+)
+POP_RO_TYPES <- list(DEL = c("DEL", "CNV"), DUP = c("DUP", "CNV"), INV = c("INV"))
+log_msg("population SV call sets")
+ev_type <- events$start_info_SVTYPE
+ev_pair <- !is.na(events$end_id)
+read_pop <- function(src) {
+  file <- path(track_dir, src, "sites.tsv.gz")
+  if (!file_exists(file)) stop(str_glue("Not found: {file} (run scripts/popSvSites.sh)"), call. = FALSE)
+  s <- read_chr(file)
+  if (!identical(names(s), c("id", "chrom", "pos", "end", "chr2", "end2", "svtype", "svlen", "filter", "af"))) {
+    stop(str_glue("Unexpected columns in {file}"), call. = FALSE)
+  }
+  dot_na <- function(x) na_if(x, ".")
+  bad_af <- s$af[s$af != "." & !str_detect(s$af, RE_AF)]
+  if (length(bad_af) > 0) stop(str_glue("{file}: AF not one number, e.g. '{bad_af[1]}'"), call. = FALSE)
+  s |>
+    transmute(
+      id, chrom, pos = as.integer(pos), svtype, filter = dot_na(filter),
+      chrom2 = coalesce(dot_na(chr2), chrom),
+      pos2 = as.integer(coalesce(dot_na(end2), dot_na(end))),
+      end = as.integer(dot_na(end)),
+      af = as.numeric(dot_na(af)),
+      pass = is.na(filter) | filter == "PASS"
+    )
+}
+RE_AF <- "^([0-9]*\\.?[0-9]+([eE][-+]?[0-9]+)?)$"
+max_or_na <- function(x) if (all(is.na(x))) NA_real_ else max(x, na.rm = TRUE)
+# Matches (event row, site index) summarized per row into the four columns.
+summarize_matches <- function(m, s, prefix) {
+  out <- m |>
+    distinct(row, k) |>
+    mutate(id = s$id[k], pass = s$pass[k], af = if_else(s$pass[k], s$af[k], NA_real_)) |>
+    summarize(n = n(), n_pass = sum(pass), ids = str_c(id, collapse = SEP), max_af = max_or_na(af), .by = row)
+  res <- tibble(row = seq_len(nrow(events))) |> left_join(out, by = "row")
+  names(res)[-1] <- str_c(prefix, "_", names(res)[-1])
+  res
+}
+pop_point <- list()
+pop_event <- list()
+for (src in names(POP_SOURCES)) {
+  s <- read_pop(src)
+  # Breakpoints: the first of every site, and the second where it exists.
+  bp <- bind_rows(
+    tibble(k = seq_len(nrow(s)), chrom = s$chrom, pos = s$pos),
+    tibble(k = seq_len(nrow(s)), chrom = s$chrom2, pos = s$pos2) |> filter(!is.na(pos))
+  )
+  h <- IRanges::findOverlaps(points_gr, as_ranges(bp$chrom, bp$pos), maxgap = POP_WINDOW)
+  near <- tibble(p = S4Vectors::queryHits(h), k = bp$k[S4Vectors::subjectHits(h)]) |>
+    filter(abs(points$pos[p] - bp$pos[S4Vectors::subjectHits(h)]) <= POP_WINDOW) |>
+    distinct(p, k) |>
+    mutate(af = if_else(s$pass[k], s$af[k], NA_real_)) |>
+    summarize(n = n(), max_af = max_or_na(af), .by = p)
+  pt <- tibble(p = seq_len(nrow(points))) |>
+    left_join(near, by = "p") |>
+    mutate(n = replace_na(n, 0L))
+  pop_point[[str_c(src, "_w", POP_WINDOW, "_n")]] <- pt$n
+  pop_point[[str_c(src, "_w", POP_WINDOW, "_max_af")]] <- pt$max_af
+
+  # Breakpoint rule: start near one breakpoint and end near the other.
+  sp <- which(points$side == "start" & ev_pair[points$row])
+  ep <- which(points$side == "end")
+  first_gr <- as_ranges(s$chrom, s$pos)
+  has2 <- which(!is.na(s$pos2))
+  second_gr <- as_ranges(s$chrom2[has2], s$pos2[has2])
+  near_set <- function(pidx, gr, kmap, kpos) {
+    h <- IRanges::findOverlaps(points_gr[pidx], gr, maxgap = POP_WINDOW)
+    tibble(row = points$row[pidx[S4Vectors::queryHits(h)]], k = kmap[S4Vectors::subjectHits(h)],
+           d = abs(points$pos[pidx[S4Vectors::queryHits(h)]] - kpos[S4Vectors::subjectHits(h)])) |>
+      filter(d <= POP_WINDOW) |>
+      select(row, k)
+  }
+  s1 <- near_set(sp, first_gr, seq_len(nrow(s)), s$pos)
+  s2 <- near_set(sp, second_gr, has2, s$pos2[has2])
+  e1 <- near_set(ep, first_gr, seq_len(nrow(s)), s$pos)
+  e2 <- near_set(ep, second_gr, has2, s$pos2[has2])
+  bp_m <- bind_rows(
+    inner_join(s1, e2, by = c("row", "k")),
+    inner_join(s2, e1, by = c("row", "k"))
+  ) |>
+    filter(map2_lgl(ev_type[row], s$svtype[k], \(t, st) !is.na(t) && st %in% (POP_TYPES[[t]] %||% character())))
+  pop_event[[src]] <- list(bp = summarize_matches(bp_m, s, str_c(src, "_bp", POP_WINDOW)))
+
+  # Reciprocal overlap rule.
+  ro_rows <- which(ev_pair & ev_type %in% names(POP_RO_TYPES) & events$start_chrom == events$end_chrom)
+  ev_lo <- pmin(as.integer(events$start_pos[ro_rows]), as.integer(events$end_pos[ro_rows]))
+  ev_hi <- pmax(as.integer(events$start_pos[ro_rows]), as.integer(events$end_pos[ro_rows]))
+  iv <- which(!is.na(s$end) & s$chrom2 == s$chrom & s$svtype %in% unlist(POP_RO_TYPES))
+  iv_lo <- pmin(s$pos[iv], s$end[iv])
+  iv_hi <- pmax(s$pos[iv], s$end[iv])
+  h <- IRanges::findOverlaps(as_ranges(events$start_chrom[ro_rows], ev_lo, ev_hi), as_ranges(s$chrom[iv], iv_lo, iv_hi))
+  qi <- S4Vectors::queryHits(h)
+  si <- S4Vectors::subjectHits(h)
+  ov <- pmin(ev_hi[qi], iv_hi[si]) - pmax(ev_lo[qi], iv_lo[si]) + 1
+  longer <- pmax(ev_hi[qi] - ev_lo[qi] + 1, iv_hi[si] - iv_lo[si] + 1)
+  ro_m <- tibble(row = ro_rows[qi], k = iv[si], ok = ov >= 0.5 * longer) |>
+    filter(ok, map2_lgl(ev_type[row], s$svtype[k], \(t, st) st %in% POP_RO_TYPES[[t]])) |>
+    select(row, k)
+  ro <- summarize_matches(ro_m, s, str_c(src, "_ro50"))
+  # Events the rule does not apply to: empty, not 0.
+  ro_cols <- names(ro)[-1]
+  ro[[ro_cols[1]]] <- if_else(seq_len(nrow(events)) %in% ro_rows, replace_na(ro[[ro_cols[1]]], 0L), NA_integer_)
+  ro[[ro_cols[2]]] <- if_else(seq_len(nrow(events)) %in% ro_rows, replace_na(ro[[ro_cols[2]]], 0L), NA_integer_)
+  bp_cols <- pop_event[[src]]$bp
+  bp_names <- names(bp_cols)[-1]
+  bp_cols[[bp_names[1]]] <- if_else(ev_pair, replace_na(bp_cols[[bp_names[1]]], 0L), NA_integer_)
+  bp_cols[[bp_names[2]]] <- if_else(ev_pair, replace_na(bp_cols[[bp_names[2]]], 0L), NA_integer_)
+  pop_event[[src]] <- list(bp = bp_cols, ro = ro)
+  log_msg(
+    "  {src}: {nrow(s)} sites; breakends with a site within {POP_WINDOW}: {sum(pt$n > 0)}; ",
+    "events matched by breakpoints: {sum(bp_cols[[bp_names[1]]] > 0, na.rm = TRUE)}, ",
+    "by reciprocal overlap: {sum(ro[[ro_cols[1]]] > 0, na.rm = TRUE)}"
+  )
+  rm(s, bp)
+}
+events <- add_point_cols(events, bind_cols(points |> select(row, side), as_tibble(pop_point)))
+for (src in names(POP_SOURCES)) {
+  events <- bind_cols(events, pop_event[[src]]$bp |> select(-row), pop_event[[src]]$ro |> select(-row))
+}
+pop_event_cols <- str_subset(names(events), str_c("^(", str_c(names(POP_SOURCES), collapse = "|"), ")_(bp|ro)"))
+
 # ---- unpack, deduplicate, event-level columns ----------------------------
 #
 # The table is for analysis: a cell holds one value, except where the source
@@ -805,7 +1072,7 @@ pair_cols <- str_subset(names(events), "^xs_pair_")
 n_cols <- ncol(events)
 events <- events |>
   select(all_of(key_cols), all_of(event_cols), all_of(side_cols("start")), all_of(side_cols("end")),
-         all_of(linx_cols), all_of(pair_cols), everything())
+         all_of(linx_cols), all_of(pair_cols), all_of(pop_event_cols), everything())
 stopifnot(ncol(events) == n_cols)
 
 # The two columns a fixed pair was split into: what each part is.
@@ -823,6 +1090,104 @@ PART_DESC <- c(
 )
 PART_RE <- str_c("^(.+)_(", str_c(names(PART_DESC), collapse = "|"), ")$")
 PART_FIELDS <- str_c(PAIRS$field, collapse = "|")
+
+# BAM evidence and population SV columns (see their sections above).
+BAM_METRIC_DESC <- c(
+  depth = "primary reads aligned over the position",
+  mapq_mean = "mean mapping quality of those reads",
+  mapq0_frac = "fraction of those reads with mapping quality 0",
+  softclip_frac_w50 = str_c(
+    "among primary reads overlapping the position +/- 50 bases, the fraction soft-clipped by at least 5 ",
+    "bases at an end (3' clips of reads running into the adapter, |TLEN| <= read length in a proper pair, ",
+    "not counted)"
+  ),
+  clip_n = str_c(
+    "reads (primary or supplementary) clipped by at least 5 bases on the breakend's side, with the clip ",
+    "at POS + CIPOS widened by 5 bases"
+  ),
+  split_n = str_c(
+    "of the clip_n reads, those with an SA alignment ending at the mate breakend (same rule); ",
+    "empty without a mate"
+  ),
+  disc_n = str_c(
+    "read pairs with one read within 1000 bases on the breakend's side and strand and its mate within ",
+    "1000 bases on the mate breakend's side and strand; empty without a mate, or with both breakends ",
+    "on one chromosome less than 1000 bases apart"
+  ),
+  improper_frac_w1000 = str_c(
+    "among primary paired reads within 1000 bases on the breakend's side and strand, the fraction ",
+    "whose pair the aligner did not flag proper (local background of chimeric pairs)"
+  ),
+  support_mapq_mean = "mean mapping quality of the reads counted in clip_n and disc_n"
+)
+BAM_OTHER_DESC <- c(
+  n = "number of BAMs",
+  clip_samples = "number of them with clip_n > 0",
+  split_samples = "number of them with split_n > 0 (empty without a mate)",
+  disc_samples = "number of them with disc_n > 0 (empty where disc_n is not measured)",
+  split_reads = "split_n summed over them (empty without a mate)",
+  disc_reads = "disc_n summed over them (empty where disc_n is not measured)"
+)
+bam_desc <- function(base) {
+  own <- str_match(base, "^bam_(tumor|normal)_(.+)$")
+  oth <- str_match(base, "^bam_other_(normals|tumors)_(.+)$")
+  case_when(
+    !is.na(own[, 1]) ~ str_c(
+      "BAM recount (scripts/bamEvidence.py) in the group's own ", own[, 2],
+      if_else(own[, 2] == "normal", " (empty: tumor-only group)", ""), ": ",
+      BAM_METRIC_DESC[coalesce(own[, 3], "depth")]
+    ),
+    !is.na(oth[, 1]) ~ str_c(
+      "BAM recount (scripts/bamEvidence.py) over the ", oth[, 2], " of the other groups: ",
+      BAM_OTHER_DESC[coalesce(oth[, 3], "n")]
+    ),
+    .default = NA_character_
+  )
+}
+POP_SRC_RE <- str_c("(", str_c(names(POP_SOURCES), collapse = "|"), ")")
+POP_POINT_RE <- str_glue("^{POP_SRC_RE}_w{POP_WINDOW}_(n|max_af)$")
+POP_EVENT_RE <- str_glue("^{POP_SRC_RE}_(bp{POP_WINDOW}|ro50)_(n|n_pass|ids|max_af)$")
+POP_FIELD_DESC <- c(
+  n = "number of matching sites (any FILTER)",
+  n_pass = "number of matching sites with FILTER PASS (or no FILTER, dbVar)",
+  ids = "their site IDs, joined with |",
+  max_af = "highest AF among the matching sites with FILTER PASS (or no FILTER)"
+)
+pop_rule <- function(rule) {
+  types <- \(l) str_c(names(l), ": ", map_chr(l, \(x) str_c(x, collapse = "/")), collapse = "; ")
+  if_else(
+    rule == str_c("bp", POP_WINDOW),
+    str_c(
+      "two-breakend events: sites whose two breakpoints (first: CHROM:POS; second: CHR2 or CHROM at END2 ",
+      "or END) are each within ", POP_WINDOW, " bases of one of the event's breakends, either way round, ",
+      "of a type allowed for the event's SVTYPE (", types(POP_TYPES), "); empty for one-breakend events"
+    ),
+    str_c(
+      "DEL, DUP and INV events on one chromosome: sites of an allowed type (", types(POP_RO_TYPES),
+      ") whose interval [POS, END] overlaps the event's by at least half the length of the longer of ",
+      "the two; empty for other events"
+    )
+  )
+}
+pop_desc <- function(x) {
+  pt <- str_match(x, POP_POINT_RE)
+  ev <- str_match(x, POP_EVENT_RE)
+  src <- coalesce(pt[, 2], ev[, 2])
+  src_desc <- str_c(POP_SOURCES[coalesce(src, names(POP_SOURCES)[1])], " (TRACK_DIR/", src, "/sites.tsv.gz)")
+  case_when(
+    !is.na(pt[, 1]) & pt[, 3] == "n" ~ str_c(
+      "number of sites of ", src_desc, " with a breakpoint within ", POP_WINDOW, " bases (any type, any FILTER)"
+    ),
+    !is.na(pt[, 1]) ~ str_c(
+      "highest AF among the sites of ", src_desc, " with a breakpoint within ", POP_WINDOW,
+      " bases and FILTER PASS (or no FILTER)"
+    ),
+    !is.na(ev[, 1]) ~ str_c(
+      src_desc, ", ", pop_rule(ev[, 3]), ": ", POP_FIELD_DESC[coalesce(ev[, 4], "n")]
+    ),
+    .default = NA_character_
+  )
+}
 
 describe <- function(col) {
   base <- str_remove(col, "^(start|end)_")
@@ -928,6 +1293,9 @@ describe <- function(col) {
     str_starts(base, "own_germline_w") ~ str_c(
       where, "breakends within ", XS_WINDOW, " bases, same orientation, in the group's own germline file"
     ),
+    str_starts(base, "bam_") ~ str_c(where, bam_desc(base)),
+    str_detect(base, POP_POINT_RE) ~ str_c(where, pop_desc(base)),
+    str_detect(col, POP_EVENT_RE) ~ pop_desc(col),
     str_starts(col, "linx_cluster_driver_") ~ str_c(
       "LINX drivers.tsv column ", str_remove(col, "^linx_cluster_driver_"), " for the event's cluster, joined with |"
     ),
@@ -1024,6 +1392,14 @@ column_type <- function(col) {
   if (str_starts(base, "xs_") || str_starts(col, "xs_pair_") || str_starts(base, "own_germline_")) {
     return(res("integer"))
   }
+  if (str_starts(base, "bam_")) {
+    counts <- "_(depth|clip_n|split_n|disc_n|n|clip_samples|split_samples|disc_samples|split_reads|disc_reads)$"
+    return(res(if (str_detect(base, counts)) "integer" else "double"))
+  }
+  if (str_detect(base, POP_POINT_RE) || str_detect(col, POP_EVENT_RE)) {
+    if (str_ends(col, "_ids")) return(res("list<string>", SEP))
+    return(res(if (str_ends(col, "_max_af")) "double" else "integer"))
+  }
   res(value_class(events[[col]]))
 }
 
@@ -1054,6 +1430,53 @@ if (length(undescribed) > 0) {
   stop("Columns without a description: ", str_c(undescribed, collapse = ", "), call. = FALSE)
 }
 log_msg("  types: {str_c(names(table(dict$type)), ' ', table(dict$type), collapse = ', ')}")
+
+# The dictionary against its reference copy in the repo (all but
+# non_empty, which is cohort-specific): any difference stops the build
+# before the table is written, so a column change is a reviewed commit.
+dict_differences <- function(new, ref) {
+  added <- setdiff(new$column, ref$column)
+  removed <- setdiff(ref$column, new$column)
+  shared <- intersect(new$column, ref$column)
+  changed <- new |>
+    filter(column %in% shared) |>
+    pivot_longer(-column, names_to = "field", values_to = "new") |>
+    inner_join(
+      ref |> pivot_longer(-column, names_to = "field", values_to = "ref"),
+      by = c("column", "field")
+    ) |>
+    filter(coalesce(new, "") != coalesce(ref, ""))
+  c(
+    if (length(added) > 0) str_c("added: ", added),
+    if (length(removed) > 0) str_c("removed: ", removed),
+    if (length(added) == 0 && length(removed) == 0 && !identical(new$column, ref$column)) {
+      "same columns in a different order"
+    },
+    if (!identical(names(new), names(ref))) {
+      str_glue("dictionary fields differ: {str_c(names(new), collapse = ',')} vs {str_c(names(ref), collapse = ',')}")
+    },
+    str_glue_data(changed, "changed {field} of {column}: '{ref}' -> '{new}'")
+  )
+}
+dict_ref <- read_csv(
+  dict_ref_file, col_types = cols(.default = col_character()), na = character(),
+  show_col_types = FALSE, lazy = FALSE, trim_ws = FALSE
+)
+dict_new <- dict |> select(-non_empty) |> mutate(across(everything(), as.character))
+differences <- dict_differences(dict_new, dict_ref)
+if (length(differences) > 0) {
+  new_ref_file <- path(db_dir, "sv_cohort_filtered.columns.new.csv")
+  write_csv(dict_new, new_ref_file, na = "")
+  stop(
+    str_glue("the column dictionary differs from {dict_ref_file} in {length(differences)} places:\n  "),
+    str_c(head(differences, 50), collapse = "\n  "),
+    if (length(differences) > 50) str_glue("\n  ... and {length(differences) - 50} more") else "",
+    str_glue("\nNo table written. If the change is intended, review and copy\n  {new_ref_file}\n",
+             "over the reference, commit it, and rerun."),
+    call. = FALSE
+  )
+}
+log_msg("  column dictionary equals the reference {dict_ref_file}")
 
 # Written without quoting, so every reader sees the values as they are; a
 # value with a tab, newline or double quote would need quoting: stop.

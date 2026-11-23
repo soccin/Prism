@@ -614,6 +614,27 @@ in table order:
 
 The run stops if a column has no description.
 
+A reference copy of the dictionary is kept in the repo,
+`docs/sv_cohort_filtered.columns.csv` (CSV, for people to read),
+without `non_empty`, which depends on the cohort. Everything else in
+it is fixed by the code, the ESVEE and PURPLE versions (INFO and FORMAT
+descriptions and types come from the VCF headers) and `tracks.tsv`.
+A different cohort can still add or remove columns: an `info_*`
+column exists only for an INFO key that occurs in the data, and
+`normal_*` columns only if a group has a matched normal.
+`postOA.sh` passes the copy as `--dict-ref`. Before the table is
+written, `svCohort.R` compares the new dictionary with it. Any added,
+removed or reordered column, or any changed description, type,
+`list_sep` or `list_count_column`, stops the run with the list of
+differences, and the run writes no table. The new dictionary is then
+written as `sv_cohort_filtered.columns.new.csv` in the database
+folder. If the change is intended, copy that file over the reference,
+commit it and rerun, so every column change shows up as a reviewed
+commit. The comparison was tested on the current build (no
+differences) and on one edit of each kind: a changed description,
+type and `list_sep`, an added and a removed column, and a reordering.
+Each edit was reported.
+
 The TSV is written without quoting, with an empty cell for a missing
 value, so every reader sees the values as they are. A value with a tab,
 a newline or a double quote would need quoting; if one is found, the
@@ -649,7 +670,9 @@ The table (TSV and Parquet) and the dictionary replace their rows in
 14. the number of columns changes when they are put in order;
 15. a column has no description, or a VCF column has no header
     definition;
-16. a value contains a tab, a newline or a double quote.
+16. a value contains a tab, a newline or a double quote;
+17. the column dictionary differs from its reference copy
+    `docs/sv_cohort_filtered.columns.csv` (see above).
 
 Not checked by the script: that fusion breakend IDs are in
 `breakend.tsv` and that `drivers.tsv` cluster IDs are in `clusters.tsv`

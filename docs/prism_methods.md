@@ -36,15 +36,21 @@ wrote:
 | Bioconductor | 3.22: GenomicRanges 1.62.1, IRanges 2.44.0, S4Vectors 0.48.1 | same |
 | CRAN | tidyverse 2.0.0 (dplyr 1.2.1, readr 2.2.0, tidyr 1.3.2, stringr 1.6.0, purrr 1.2.2), fs 2.1.0, nanoparquet 0.5.2 | same |
 | Python | 3.10.14, pyarrow 25.0.1 | `python3` on the `PATH` of the job |
+| pysam | 0.24.0 (its own htslib 1.23.1) | `python3` on the `PATH` of the `bamEvidence.sh` job |
+| bcftools | 1.20 | `/admin/software/bcftools/bcftools-1.20/bin/bcftools` (`BCFTOOLS` in `popSvSites.sh` and `spotCheckSvCohort.R`); first line of the `popSvSites.sh` log |
+| samtools | 1.20 (htslib 1.20) | `samtools` on the `PATH`; used by `spotCheckSvCohort.R` only |
 
-The versions above were read on 2026-11-22 from the `Rscript` and
-`python3` that `postOA.sh` finds on the `PATH`. `postOA.sh` does not log
-them. To record them for a run, use the same environment as the job and
-run (a few seconds):
+The R and pyarrow versions were read on 2026-11-22, pysam and samtools
+on 2026-11-23, from the `Rscript`, `python3` and `samtools` on the
+`PATH` of the jobs. `postOA.sh` and `bamEvidence.sh` do not log them.
+To record them for a run, use the same environment as the job and run
+(a few seconds):
 
 ```
 Rscript --vanilla -e "cat(R.version.string, '\n'); for (p in c('BiocVersion', 'GenomicRanges', 'IRanges', 'S4Vectors', 'tidyverse', 'dplyr', 'readr', 'tidyr', 'stringr', 'purrr', 'fs', 'nanoparquet')) cat(p, as.character(packageVersion(p)), '\n')"
 python3 -c "import sys, pyarrow; print(sys.version.split()[0], 'pyarrow', pyarrow.__version__)"
+python3 -c "import pysam, pysam.version; print('pysam', pysam.__version__, 'htslib', pysam.version.__htslib_version__)"
+samtools --version
 ```
 
 The Prism version of a run is the `PRISM=` line at the top of its log
@@ -54,8 +60,28 @@ The Prism version of a run is the `PRISM=` line at the top of its log
 
 ```
 ./Prism/scripts/fetchTracks.sh [TRACK_DIR]           # once per site, login node
+sbatch ./Prism/scripts/popSvSites.sh [TRACK_DIR]     # once per site, after fetchTracks.sh
+./Prism/bamEvidence.sh [OUT_DIR]                     # per run: prints the sbatch command below
+sbatch --array=0-N ./Prism/bamEvidence.sh [OUT_DIR]  # per run, N = number of BAMs - 1
 sbatch ./Prism/postOA.sh [-t TRACK_DIR] [OUT_DIR]
 ```
+
+Three inputs of step 2 are made before `postOA.sh` runs:
+
+- `scripts/fetchTracks.sh` downloads the region tracks and the
+  population SV call sets into `TRACK_DIR` (once per site; see
+  Coordinates and region tracks, and Population SV call sets);
+- `scripts/popSvSites.sh` reduces the population SV VCFs to one site
+  table per source (once per site; see Population SV call sets);
+- `bamEvidence.sh` counts the reads at every SV breakend of the cohort
+  in every BAM of the run (once per run; see BAM evidence). It reads
+  `res/prism/db/samples.tsv`, which step 1 writes. On a new run, run
+  `postOA.sh` once (it stops at step 2: `--bam-dir not found`) or
+  `Rscript Prism/scripts/postOA.R --out-dir OUT_DIR --res-dir
+  res/prism/db` alone, then `bamEvidence.sh`, then `postOA.sh`.
+
+Section 1.5 is a spot check of the computed columns, run by hand after
+a build; `postOA.sh` does not run it.
 
 `postOA.sh` runs four steps. All write to `res/prism/db/` in the folder
 that holds `OUT_DIR`:
@@ -151,11 +177,16 @@ that file is in the table, whatever its FILTER value.
 | cross-sample sets | `purple.sv.vcf.gz`, `purple.sv.germline.vcf.gz`, `esvee/<sample_id>.esvee.unfiltered.vcf.gz` of every group |
 | region tracks | `TRACK_DIR/tracks.tsv` and the files it lists |
 | Hartwig regions | `<hmf>/dna/sv/sv_prep_blacklist.38.bed`, `<hmf>/common/unmap_regions.38.tsv` |
+| driver gene panel | `<hmf>/common/DriverGenePanel.38.tsv` (the panel LINX reads; columns `gene`, `likelihoodType`) |
+| BAM read counts | `res/prism/db/bam_evidence/<sample>.bam_evidence.tsv.gz`, one file per tumor and per normal of `samples.tsv` (`bamEvidence.sh`; see BAM evidence) |
+| population SV sites | `TRACK_DIR/<source>/sites.tsv.gz` for `gnomad_sv`, `kgp_sv`, `dbvar_nstd166`, `dbvar_nstd200` (`scripts/popSvSites.sh`; see Population SV call sets) |
 
 Every file is read as text (`col_character`, no quote handling, no
 value turned into NA), so values reach the table exactly as written.
 The one exception is the VCF missing value `.`: in QUAL, FILTER, INFO
-and FORMAT it is stored as an empty cell.
+and FORMAT it is stored as an empty cell. The BAM read counts and the
+population sites are Prism's own intermediate files: their numbers are
+read as numbers, `NA` (BAM counts) and `.` (sites) as missing.
 
 #### Events (rows)
 
@@ -184,21 +215,48 @@ group in VCF order of their start record.
 
 Column order:
 
-1. key columns (table below);
-2. event-level columns: fields with the same value on both breakends,
+1. the lead block (user decision, table below): the event, the genes
+   at each breakend with their role and LINX's annotation, fusions,
+   cluster drivers and category, copy number and support;
+2. the other key columns (table further below);
+3. event-level columns: fields with the same value on both breakends,
    stored once, without a `start_`/`end_` prefix (see Unpacking, rule
    5);
-3. every `start_*` column, then every `end_*` column (the same set of
+4. every `start_*` column, then every `end_*` column (the same set of
    columns for each breakend);
-4. the per-event LINX columns (`linx_*`);
-5. the `xs_pair_*` columns.
+5. the per-event LINX columns (`linx_*`);
+6. the `xs_pair_*` columns, then the per-event population SV columns.
+
+A column appears once: the lead block and key columns are left out of
+the groups after them.
+
+Lead block, in this order (53 columns):
+
+| # | Columns |
+|---|---|
+| 1-5 | `group_id`, `sample_id`, `event_key`, `run_mode`, `filter` |
+| 6-7 | `linx_type` (empty for PON events, which LINX does not analyze), `info_SVTYPE` (every event; BND for INFERRED, which LINX types INF) |
+| 8-14 | `start_chrom`, `start_pos`, `start_orient`, `end_chrom`, `end_pos`, `end_orient`, `length` |
+| 15-18 | `start_info_CIPOS_lower`, `_upper`, `end_info_CIPOS_lower`, `_upper` |
+| 19-28 | `start_linx_bnd_gene`, `start_gene_role`, `start_linx_bnd_` `canonical`, `regionType`, `codingType`, `disruptive`, `exonUp`, `exonDown`, `undisruptedCopyNumber`, `reportedStatus` |
+| 29-38 | the same 10 for `end_` |
+| 39-43 | `fusion_gene_5p`, `fusion_gene_3p`, `linx_fusion_phased`, `linx_fusion_reported`, `linx_fusion_reportedType` |
+| 44-48 | `linx_cluster_driver_gene`, `linx_cluster_driver_eventType`, `linx_cluster_category`, `linx_cluster_resolvedType`, `linx_cluster_clusterCount` |
+| 49-53 | `start_info_PURPLE_CN_CHANGE`, `end_info_PURPLE_CN_CHANGE`, `info_PURPLE_JCN`, `start_info_PURPLE_AF`, `tumor_VF` |
+
+The other `start_linx_bnd_*`, `end_linx_bnd_*` and `linx_fusion_*`
+list columns stay in their groups; their elements line up by position
+with the lists in the lead block.
 
 Within a breakend, `info_*`, `tumor_*`, `esvee_bnd_*` and `normal_*`
 columns appear in the order their keys are first seen, group by group,
 and a split pair takes the place of its field. So the order can differ
 between runs. Select columns by name.
 
-Key columns:
+Key columns (`group_id`, `sample_id`, `run_mode`, `event_key` and
+`length` are in the lead block; the rest follow it in this order:
+`normal_id`, `n_breakends`, `in_linx`, `linx_start_is_vcf_start`,
+`same_chrom`, `start_coords`, `end_coords`, `start_id`, `end_id`):
 
 | Column | Definition |
 |---|---|
@@ -223,12 +281,23 @@ Per breakend (`start_` or `end_` in front):
 | `tumor_<KEY>`, `normal_<KEY>` | one column per FORMAT key, for the tumor sample (column `sample_id`) and the normal (the other sample column, if any); empty where the record has no value for the key |
 | `esvee_bnd_<column>` | the columns of ESVEE's `breakend.tsv` that no VCF field repeats (see Joins and Unpacking) |
 | `linx_bnd_<column>`, `linx_bnd_n` | LINX `breakend.tsv` rows at this breakend (every column but `svId`, including LINX's `coords`), one list element per row (see Joins and Lists) |
+| `gene_role` | one element per element of `linx_bnd_gene`, same order: the gene's `likelihoodType` (ONCO or TSG) in the driver gene panel; empty element for a gene not on the panel (see Joins) |
 | `region_*` | region tracks (see Region tracks) |
 | `xs_*`, `own_germline_*` | the same breakend in other files (see Cross-sample columns) |
+| `bam_tumor_*`, `bam_normal_*` | reads at the breakend recounted in the group's own tumor and normal BAM (see BAM evidence) |
+| `bam_other_normals_*`, `bam_other_tumors_*` | the same counts summarized over the normal and tumor BAMs of the other groups (see BAM evidence) |
+| `<source>_w100_n`, `<source>_w100_max_af` | sites of a population SV call set with a breakpoint within 100 bases (see Population SV call sets) |
 
 Per event: `linx_<column>` (LINX `svs.tsv`), `linx_cluster_<column>`
-(`clusters.tsv`), `linx_fusion_*`, `linx_link_*`,
-`linx_cluster_driver_*` (lists), and `xs_pair_*`.
+(`clusters.tsv`), `linx_fusion_*`, `fusion_gene_5p`,
+`fusion_gene_3p`, `linx_link_*`, `linx_cluster_driver_*` (lists),
+`xs_pair_*`, and the population SV call set matches of the event,
+`<source>_bp100_*` (by both breakpoints) and `<source>_ro50_*` (by
+reciprocal overlap) (see Population SV call sets). `<source>` is
+`gnomad_sv`, `kgp_sv`, `dbvar_nstd166` or `dbvar_nstd200`.
+`gene_role` and `fusion_gene_*` do not carry the
+`linx_bnd_` or `linx_fusion_` prefix, which is kept for columns of the
+LINX files (`checkSvCohort.R` rebuilds the LINX rows from them).
 
 In the TSV, logical columns Prism adds are written `TRUE` or `FALSE`;
 values copied from a tool keep the tool's spelling (LINX writes
@@ -279,7 +348,30 @@ values copied from a tool keep the tool's spelling (LINX writes
   SV(s). A fusion is listed on the SV of its 5' breakend with
   `linx_fusion_side` = `5p` and on the SV of its 3' breakend with `3p`.
   When both breakends are on one SV, that SV lists the fusion twice
-  (`5p`, `3p`).
+  (`5p`, `3p`). A fusion breakend ID without a `breakend.tsv` row
+  stops the script.
+- **Fusion genes.** `fusion_gene_5p` and `fusion_gene_3p` are the
+  `breakend.tsv` `gene` of `fivePrimeBreakendId` and
+  `threePrimeBreakendId`, one element per fusion in the order of the
+  `linx_fusion_*` lists. They are not split from `linx_fusion_name`,
+  because the name does not always hold the breakend genes. The script
+  checks every fusion: the name must be `<5' gene>_<3' gene>`, or, for
+  an enhancer partner on the 5' side, `@<region>_<3' gene>`; anything
+  else stops it. LINX names enhancer partners by region (`@IGH`,
+  `@IGK`, `@BCL11B`) while the breakend's gene is another: in this
+  cohort 12 of 1,171 fusions, all `ENHANCER_PROMISCUOUS`, e.g.
+  `@IGH_PSD3` with 5' breakend gene IGHA1, `@BCL11B_LRP12` with RPL3P4.
+- **Gene roles.** Each `breakend.tsv` row's `gene` is looked up in the
+  driver gene panel (`DriverGenePanel.38.tsv`; 514 genes: 207 ONCO, 307
+  TSG). The roles are collapsed from the same rows in the same order as
+  `{side}_linx_bnd_*`, so `{side}_gene_role` has as many elements as
+  `{side}_linx_bnd_n` (checked on every row, then checked again element
+  by element against the panel). The script stops if the panel is
+  missing, lists a gene twice, or has a `likelihoodType` other than
+  ONCO or TSG. The roles are Hartwig's pan-cancer calls, mostly from
+  solid tumors: JAK1 and ERBB4 are TSG there, while JAK1 is activated
+  in some T-cell lymphomas. The role says nothing about the effect of
+  this event.
 - **Links.** A link is listed on its `lowerSvId` and, if different, on
   its `upperSvId`.
 - **Cluster drivers.** `drivers.tsv` rows are listed on every event of
@@ -389,6 +481,7 @@ the column's separator (`list_sep` in the dictionary):
 | `linx_fusion_*`, `linx_link_*`, `linx_cluster_driver_*` | `\|` | one per fusion, link or driver row of the event |
 | `region_rmsk_name`, `_class`, `_family` | `\|` | distinct labels of the repeats at the position |
 | `*_group_list_w50` | `\|` | distinct group IDs, sorted |
+| `<source>_bp100_ids`, `<source>_ro50_ids` | `\|` | IDs of the matching population sites, each once; a set, the order carries no meaning |
 | `info_*` with VCF Number other than 0 or 1 (for example `ASMLNKS`) | `,` | as written in the VCF |
 | `linx_clusterReason`, `linx_lineTypeStart`, `linx_lineTypeEnd`, `linx_geneStart`, `linx_geneEnd` | `;` | as LINX wrote them in `svs.tsv` |
 
@@ -417,13 +510,23 @@ labels are taken in file order, separately in each column, so element k
 of `region_rmsk_name` need not belong to element k of
 `region_rmsk_class`.
 
+The population site ID lists are not checked for `|` (the check above
+is in the LINX list code only). None of the four site tables contains
+a `|` (checked on 2026-11-23).
+
 **Empty cells.** In the TSV an empty cell is a missing value; in the
 Parquet copy it is null. A cell is empty when: the column is an
 `end_*` column of a one-breakend event (except LINX end rows, see
 Joins); the record has no such INFO or FORMAT key, or the VCF has `.`;
-the group is tumor-only (`normal_*`, `own_germline_*`); the record is
-`INFERRED` (`esvee_bnd_*`); the event is not in LINX (`linx_*`); there
-is no source row for a list; or there is no interval or group to list.
+the group is tumor-only (`normal_*`, `own_germline_*`, `bam_normal_*`);
+the record is `INFERRED` (`esvee_bnd_*`); the event is not in LINX
+(`linx_*`); there is no source row for a list; there is no interval or
+group to list; a BAM measure is not defined for the breakend (no mate,
+no reads; see BAM evidence); or a population rule does not apply to the
+event (`<source>_bp100_*` for one-breakend events, `<source>_ro50_*`
+for events other than DEL, DUP and INV) or no matching site has an AF
+(`*_max_af`). A count is 0, not empty, where the rule applies and
+nothing matches.
 
 #### Types
 
@@ -452,7 +555,11 @@ type is set as follows, in this order:
 5. Region columns: in-track flags boolean; `region_centromere_distance`
    integer; RepeatMasker labels `list<string>`;
    `region_encode_blacklist_reason` string. `xs_*`, `xs_pair_*` counts
-   and `own_germline_*`: integer; group lists `list<string>`.
+   and `own_germline_*`: integer; group lists `list<string>`. BAM
+   columns: counts integer (`depth`, `clip_n`, `split_n`, `disc_n`, and
+   `n`, `*_samples`, `*_reads` of the other-sample summaries), means and
+   fractions double. Population columns: `_n` and `_n_pass` integer,
+   `_max_af` double, `_ids` `list<string>`.
 6. Any other column (ESVEE and LINX scalars): taken from all of its
    values: boolean if all are `true`/`false`/`TRUE`/`FALSE`, integer if
    all are whole numbers, double if all are numbers, else string. A
@@ -513,11 +620,12 @@ in a gap between two model intervals of one centromere gets the
 distance to the nearer one. The cell is empty when the chromosome has
 no model interval (for example chrM or an unplaced contig).
 
-The 20 tracks, as downloaded by `scripts/fetchTracks.sh` on 2026-11-21
-(`TRACK_DIR/tracks.tsv` holds the same list with full URLs). `md5 check`
-is the comparison with GIAB's published md5 list
-(`GRCh38-genome-stratifications-md5s.txt`); the other sources publish
-none, so their md5 identifies the file used.
+The 20 region tracks, as downloaded by `scripts/fetchTracks.sh` on
+2026-11-21 (`TRACK_DIR/tracks.tsv` holds the same list with full URLs,
+and also the four population SV call sets, listed under Population SV
+call sets). `md5 check` is the comparison with GIAB's published md5
+list (`GRCh38-genome-stratifications-md5s.txt`); the other sources of
+region tracks publish none, so their md5 identifies the file used.
 
 GIAB = `https://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/release/genome-stratifications/v3.6/GRCh38@all`,
 UCSC = `https://hgdownload.soe.ucsc.edu/goldenPath/hg38/database`.
@@ -598,6 +706,204 @@ Both ends must match, and the two matching records must be one SV in
 the other group. `xs_pair_*` is empty for one-breakend events and 0 for
 two-breakend events without such a group.
 
+#### BAM evidence
+
+These columns count the reads at each breakend directly in the BAM
+files, separately from the SV caller, in the group's own tumor and
+normal and in the samples of the other groups. They are counts; they
+do not mark or remove anything.
+
+**Recount, `bamEvidence.sh` and `scripts/bamEvidence.py`.** One SLURM
+array task per BAM: every `OUT_DIR/<group>/alignments/<sample>/<sample>.redux.bam`
+(the REDUX output, duplicates marked), in sorted path order; in this
+project 23 BAMs (14 tumors, 9 normals). Each task counts its BAM at
+every breakend of the cohort: every record of every group's
+`purple.sv.vcf.gz`, all FILTER values (32,965 records), not only the
+records of its own group. Output:
+`res/prism/db/bam_evidence/<sample>.bam_evidence.tsv.gz`, one row per
+record: `group_id`, `id` (VCF ID) and the nine measures below, `NA`
+where a measure is not defined, fractions and means to 6 significant
+digits.
+
+A breakend has its POS, its CIPOS (0,0 when absent), its orientation (1
+if ALT starts with REF, -1 if ALT ends with REF) and its mate, the
+record its `MATEID` names (none for single and inferred breakends).
+Orientation 1 keeps the reference up to POS: supporting reads align up
+to POS and continue elsewhere. Orientation -1 keeps the reference from
+POS on.
+
+Reads: unmapped, secondary, duplicate and QC-fail records are skipped.
+Primary records give the depth, the clip fraction and the read pairs;
+primary and supplementary records give the clipped reads. `clip_n`,
+`split_n` and `disc_n` count distinct read names (fragments); `depth`
+and the fractions count primary records. No mapping-quality threshold
+is applied; the mean mapping quality is reported instead. Constants:
+minimum clip 5 bases; clip position tolerance 5 bases; clip-fraction
+window 50 bases; read-pair window 1000 bases; minimum span for read
+pairs 1000 bases.
+
+| Measure | Definition |
+|---|---|
+| `depth` | primary reads whose alignment covers POS |
+| `mapq_mean`, `mapq0_frac` | mean mapping quality of those reads, and the fraction with mapping quality 0; empty when `depth` is 0 |
+| `softclip_frac_w50` | among primary reads that overlap POS - 50 to POS + 50, the fraction with a soft clip of at least 5 bases at either end. The 3' clip of a read in a proper pair whose fragment (\|TLEN\|) is no longer than the read is not counted: that read runs into the adapter. Empty when no read overlaps |
+| `clip_n` | reads (primary or supplementary) clipped, soft or hard, by at least 5 bases on the breakend's side, with the clip between POS + CIPOS lower - 5 and POS + CIPOS upper + 5. Orientation 1: the alignment ends there and its right end is clipped; -1: the alignment starts there and its left end is clipped |
+| `split_n` | of the `clip_n` reads, those with an `SA` alignment on the mate's chromosome whose edge lies in the mate's window, by the same rule at the mate's POS, CIPOS and orientation (orientation 1: the SA alignment's last base; -1: its first base). Empty without a mate |
+| `disc_n` | read pairs with a primary read on the breakend's side (orientation 1: forward strand, alignment start in POS - 1000 to POS; -1: reverse strand, alignment end in POS to POS + 1000) and its mate mapped on the mate breakend's side by the same rule (the mate's end from its `MC` tag, else its start plus the read length). Empty without a mate, and empty when both breakends are on one chromosome less than 1000 bases apart, where normal pairs fit the same geometry |
+| `improper_frac_w1000` | among primary paired reads on the breakend's side (as for `disc_n`), the fraction whose pair the aligner did not flag proper (mate unmapped, on another chromosome, wrong orientation, or insert size outside the library's distribution). A measure of the local background, not of support. Empty when there is no such read |
+| `support_mapq_mean` | mean mapping quality of the reads counted in `clip_n` and `disc_n`, each read once (its first record met); empty when there are none |
+
+This is a recount from the alignments, not a copy of ESVEE's counts.
+ESVEE assembles the reads, so it also counts reads that extend into an
+inserted sequence or a repeat without a clip at POS; `clip_n` and
+`split_n` can be lower than the VCF's `SF`.
+
+A task stops if the read groups of its BAM do not all name the sample
+(`SM`), if a PURPLE VCF is missing, if a record lacks one ID, REF or
+ALT, if an ID occurs twice in a VCF, if ALT neither starts nor ends
+with REF, if a `MATEID` names no record, if a breakend's chromosome is
+not in the BAM, or if the array has a different number of tasks than
+there are BAMs.
+
+**In the table.** For each breakend (`start_` or `end_` in front):
+
+| Columns | Definition |
+|---|---|
+| `bam_tumor_<measure>` | the row of this record in the file of the group's tumor (`sample_id`) |
+| `bam_normal_<measure>` | the same in the file of the group's normal (`normal_id`); empty for tumor-only groups |
+| `bam_other_normals_<summary>`, `bam_other_tumors_<summary>` | over the normal BAMs, or the tumor BAMs, of all other groups, at this record: `n` the number of BAMs; `clip_samples`, `split_samples`, `disc_samples` the number of them with `clip_n`, `split_n`, `disc_n` above 0; `split_reads`, `disc_reads` the sums of `split_n` and `disc_n` |
+
+In this cohort `bam_other_tumors_n` is 13 on every breakend, and
+`bam_other_normals_n` is 8 for a matched group and 9 (every normal) for
+a tumor-only group. The `split_*` summaries are empty where the
+breakend has no mate, the `disc_*` summaries where `disc_n` is not
+measured (the geometry is the same in every BAM).
+
+`svCohort.R` stops if `--bam-dir` does not exist, if it holds a file
+for a sample that is not in `samples.tsv`, if a tumor or normal has no
+file, if a file's columns are not `group_id`, `id` and the nine
+measures in that order, or if a file's rows do not match the cohort's
+PURPLE records one to one. The joins to the events are one to one, and
+`bam_tumor_depth` must be non-empty on every breakend.
+
+htslib warns "The index file is older than the data file" for several
+BAMs and one PURPLE SV VCF. In `out/` these index files have earlier
+modification times than their data files (for example a 174 GB BAM:
+index and the other files of its folder 13:40:06, BAM 13:56:25, all on
+2026-11-18). The warning compares file times only; the indexes were
+not rebuilt or compared with their files.
+
+#### Population SV call sets
+
+These columns say whether a breakend, or an event, matches a site of a
+population SV call set. Four short-read WGS call sets are used; no
+long-read set. The columns are counts and site IDs; they do not mark or
+remove anything.
+
+**Sources.** Downloaded by `fetchTracks.sh` on 2026-11-22 and listed
+in `TRACK_DIR/tracks.tsv` with their full URLs. `md5 check` compares
+the file with the md5 the source publishes, where it publishes one.
+
+| Source | Call set | File | Records | md5 | md5 check |
+|---|---|---|---|---|---|
+| `gnomad_sv` | gnomAD-SV v4.1 sites | `gnomad.v4.1.sv.sites.vcf.gz` (Google Cloud bucket `gcp-public-data--gnomad`, `release/4.1/genome_sv/`) | 2,154,486 | 3ee614951c2f0c36659842876f7ce0ba | ok (the bucket's md5) |
+| `kgp_sv` | 1000 Genomes high coverage, 3,202 samples (Byrska-Bishop 2022) | `1KGP_3202.gatksv_svtools_novelins.freeze_V3.wAF.vcf.gz` (EBI FTP, `20210124.SV_Illumina_Integration/`) | 173,366 | 44be92aae63a812c19c2d6c91b22b4b9 | ok (the release manifest) |
+| `dbvar_nstd166` | gnomAD-SV v2.1, 14,891 genomes (Collins 2020), as dbVar study nstd166 | `nstd166.GRCh38.variant_call.vcf.gz` (NCBI dbVar FTP) | 308,858 | 160623af53411e9b7b65d0826c980465 | none (dbVar lists no md5) |
+| `dbvar_nstd200` | CCDG, 17,795 genomes (Abel 2020), as dbVar study nstd200 | `nstd200.GRCh38.variant_call.vcf.gz` (NCBI dbVar FTP) | 299,040 | 1f58bce51299daa768d81cb1469f0fcd | none (dbVar lists no md5) |
+
+**Site tables, `scripts/popSvSites.sh`.** A job, once per site, after
+`fetchTracks.sh`. `bcftools query` writes one line per VCF record,
+every record kept (any FILTER), to `TRACK_DIR/<source>/sites.tsv.gz`:
+`id`, `chrom`, `pos`, `end`, `chr2`, `end2`, `svtype`, `svlen`,
+`filter`, `af` (VCF ID, CHROM, POS, INFO `END`, `CHR2`, `END2`,
+`SVTYPE`, `SVLEN`, FILTER, INFO `AF`); a missing value is `.`. The
+dbVar files have no `END2` and no FILTER (`.` on every line). For a
+dbVar record whose ALT is in breakend notation (`N[chr:pos[` and the
+like), `end2` is the partner position in ALT, and `chr2` its
+chromosome where `CHR2` is missing. dbVar names the primary chromosomes
+`1`-`22`, `X`, `Y`, `MT`; they are written `chr1`-`chr22`, `chrX`,
+`chrY`, `chrM`, as in the run's GRCh38. Other contigs are kept as
+written and match no breakend. The job stops if a table's line count
+differs from the VCF's record count: from the index, or, for the 1000
+Genomes file, whose index has no count metadata, from its data lines.
+
+Site types and FILTER values in the tables (counted on 2026-11-23):
+
+| Source | SVTYPE (records) | FILTER |
+|---|---|---|
+| `gnomad_sv` | DEL 1,206,278; BND 356,035; INS 304,645; DUP 269,326; CPX 15,189; INV 2,193; CNV 721; CTX 99 | PASS 1,199,117; other 955,369 |
+| `kgp_sv` | DEL 90,259; INS 49,693; DUP 28,242; CPX 3,568; INV 920; CNV 673; CTX 11 | PASS on every record |
+| `dbvar_nstd166` | DEL 154,952; INS 101,543; DUP 42,026; CNV 9,637; INV 700 | none |
+| `dbvar_nstd200` | DEL 202,063; BND 51,125; DUP 44,149; INV 1,703 | none |
+
+**Breakpoints of a site.** The first breakpoint is `chrom`:`pos`. The
+second, where the site has one, is on `chr2` (or `chrom` where `chr2`
+is missing) at `end2` (or `end` where `end2` is missing). In the
+gnomAD table, DEL, DUP, INV, CNV and CPX records and all but 289 INS
+records have no `END2`, so their second breakpoint is `end`; the CTX
+records and 254,903 BND records have `CHR2` and `END2`. Sites carry no
+orientation here, and none is compared; nor are confidence intervals
+or inserted sequences.
+
+gnomAD writes 101,132 of its BND records with `CHR2` = CHROM and no
+`END2`. Their second breakpoint is `end`, which equals `pos` in 98,515
+of them, so those sites have one breakpoint position. Prism does not
+compute a partner position from `SVLEN`. All 101,132 have FILTER
+`UNRESOLVED` (alone or with other values), so they can add to `_n`, not
+to `_n_pass` or `_max_af`.
+
+**PASS and AF.** A site is PASS when its FILTER is `PASS` or missing
+(`.`), so every dbVar site is PASS. AF is the site's INFO `AF`.
+
+**Per breakend.** For each breakend (the start of every event, the end
+of two-breakend events) and each source:
+
+| Column | Definition |
+|---|---|
+| `<source>_w100_n` | number of sites with a breakpoint on the breakend's chromosome and \|site position - POS\| <= 100; any type, any FILTER; each site counted once |
+| `<source>_w100_max_af` | highest AF among those sites that are PASS; empty if there is none, or none has an AF |
+
+**Per event, by breakpoints: `<source>_bp100_*`.** Two-breakend events
+only. A site matches when one of its breakpoints is within 100 bases of
+the event's start (same chromosome) and its other breakpoint within 100
+bases of the event's end, either way round, and its SVTYPE is allowed
+for the event's `info_SVTYPE`:
+
+| Event `info_SVTYPE` | Site SVTYPE allowed |
+|---|---|
+| DEL | DEL, CNV, BND |
+| DUP | DUP, CNV, BND |
+| INV | INV, BND |
+| INS | INS |
+| BND | BND, CTX |
+
+**Per event, by reciprocal overlap: `<source>_ro50_*`.** DEL, DUP and
+INV events (both breakends on one chromosome). The event's interval
+runs from the lower to the higher of its two positions. A site's
+interval runs from the lower to the higher of `pos` and `end`; only
+sites with an `end`, with `chr2` missing or equal to `chrom`, and of
+an allowed type are used: for a DEL event DEL and CNV, for a DUP DUP
+and CNV, for an INV INV. A site matches when the two intervals overlap
+by at least half the length of the longer one (lengths in bases, both
+ends included).
+
+Each event rule gives four columns:
+
+| Column | Definition |
+|---|---|
+| `_n` | number of matching sites, any FILTER |
+| `_n_pass` | number of matching sites that are PASS |
+| `_ids` | their site IDs (VCF ID), each once (a list) |
+| `_max_af` | highest AF among the matching PASS sites |
+
+`_n` and `_n_pass` are 0 where the rule applies and no site matches,
+and empty where it does not apply. A site of another type (for example
+CPX) never matches an event; it can still count in `<source>_w100_n`.
+
+`svCohort.R` stops if a site table is missing, if its columns are not
+the ten above in that order, or if an AF is neither one number nor
+`.`.
+
 #### Column dictionary, TSV format and manifest
 
 `sv_cohort_filtered.columns.tsv` has one row per column of the table,
@@ -672,13 +978,29 @@ The table (TSV and Parquet) and the dictionary replace their rows in
     definition;
 16. a value contains a tab, a newline or a double quote;
 17. the column dictionary differs from its reference copy
-    `docs/sv_cohort_filtered.columns.csv` (see above).
+    `docs/sv_cohort_filtered.columns.csv` (see above);
+18. the driver gene panel is missing, lists a gene twice or has a
+    `likelihoodType` other than ONCO or TSG, or a `gene_role` list does
+    not line up with `linx_bnd_gene`;
+19. a fusion breakend ID has no `breakend.tsv` row, or a fusion name is
+    neither `<5' gene>_<3' gene>` nor `@<region>_<3' gene>`;
+20. `--bam-dir` does not exist, holds a file for a sample not in
+    `samples.tsv`, or lacks the file of a tumor or normal; a file's
+    columns are not the expected ones; or a file's rows do not match
+    the cohort's PURPLE records one to one (see BAM evidence);
+21. a population site table is missing, has other columns, or has an
+    AF that is neither one number nor `.` (see Population SV call
+    sets).
 
-Not checked by the script: that fusion breakend IDs are in
-`breakend.tsv` and that `drivers.tsv` cluster IDs are in `clusters.tsv`
-(`docs/scripts/checkLinx.R` checks both); that `MATEID` is reciprocal
+Not checked by the script: that `drivers.tsv` cluster IDs are in `clusters.tsv`
+(`docs/scripts/checkLinx.R` checks it); that `MATEID` is reciprocal
 in the cross-sample sets; that `sample_id` is unique over groups (which
-`event_key` assumes).
+`event_key` assumes); that a population site ID contains no `|`.
+
+The computed columns (region tracks, cross-sample counts, BAM evidence,
+population matches) are not recomputed by step 4, which rebuilds the
+source values. Section 1.5 recomputes them for a random sample of
+events by a second method.
 
 ### 1.3 Step 3, `scripts/tsvToParquet.py`: the typed Parquet copy
 
@@ -758,8 +1080,11 @@ then use the dictionary's `type` and `list_sep` to convert.
 ### 1.4 Step 4, `docs/scripts/checkSvCohort.R`: validation
 
 ```
-Rscript --vanilla Prism/docs/scripts/checkSvCohort.R [OUT_DIR] [DB_DIR]
+Rscript --vanilla Prism/docs/scripts/checkSvCohort.R [OUT_DIR] [DB_DIR] [HMF_DIR]
 ```
+
+`HMF_DIR` (for the driver gene panel) defaults to the Hartwig resource
+folder of the run, as in `postOA.sh`; `postOA.sh` passes it.
 
 `postOA.sh` runs it as its last step and fails if any check fails (exit
 status 1). It can also be run on its own after a change to `svCohort.R`
@@ -787,6 +1112,8 @@ Over the whole table:
 | Check | What it compares |
 |---|---|
 | `linx_tables_equal` | every LINX value in the table, as text, against the stacked LINX tables (`data/linx_somatic_*.tsv.gz`), each source row exactly once and nothing extra: the `linx_*` columns against `svs`; the `linx_cluster_*` columns, once per cluster, against `clusters`; the per-transcript rows rebuilt from the start and end lists against `breakend`; the fusions from their 5' side and from their 3' side, each on the SV of LINX's breakend ID, against `fusion`; the links from the lower and from the upper SV against `links`; the drivers of each event's cluster against `drivers` (the same list on every event of a cluster; drivers with no SV cluster are counted, not in the table) |
+| `gene_roles_equal` | every element of `start_gene_role` and `end_gene_role` equals the panel's `likelihoodType` of the gene in the same position of `linx_bnd_gene` (empty if not on the panel), and the list lengths equal `linx_bnd_n` |
+| `fusion_genes_equal` | every element of `fusion_gene_5p` and `fusion_gene_3p` equals the `breakend.tsv` gene of the fusion's breakend ID in the same position, and every `linx_fusion_name` is `<5' gene>_<3' gene>` or `@<region>_<3' gene>` |
 | `parquet_equal` | every cell of the Parquet file equals the TSV cell converted to the dictionary type, by a separate implementation in R (nanoparquet) of the conversion in `tsvToParquet.py`; lists compared element by element. Doubles are compared to 1 part in a million (`same_values()`): R's `as.numeric` does not always give the nearest double (`5.754e-03` lands one unit in the last place from the value pyarrow and Python give, checked with exact arithmetic). Conversion errors, which this check is for, are far larger; every other type must be identical |
 
 It also prints the dictionary's type counts, the columns empty in every
@@ -832,6 +1159,57 @@ the region and cross-sample columns.
   | 2 | no | PON | 930 |
   | 2 | yes | PASS | 10,145 |
 
+- Full cohort with BAM evidence and population SV call sets,
+  2026-11-23 (`postOA.sh` job 13303561, the code of commit 7786c4d;
+  log `out/logs/other/postOA.13303561.out`): the same 21,890 events,
+  454 columns. The 108 new columns: 60 BAM columns (30 per breakend),
+  16 per-breakend population columns (8 per breakend) and 32 per-event
+  population columns. 23 BAM files (14 tumors, 9 normals) of 32,965 rows each,
+  758,195 rows. The dictionary equaled its reference copy. Every check
+  was TRUE, including `linx_tables_equal` and `parquet_equal`. Column
+  types: string 48, integer 186, double 55, boolean 52, `list<string>`
+  64, `list<integer>` 33, `list<double>` 4, `list<boolean>` 12. One
+  column was empty in every row (`end_info_INFERRED`). The BAM
+  columns: `bam_tumor_split_n` is non-empty on the 11,075 two-breakend
+  events, `bam_tumor_disc_n` on 7,821 of them (the other 3,254 have
+  both breakends on one chromosome less than 1000 bases apart), and
+  `start_bam_normal_*` on the 15,739 events of matched groups.
+  Population matches (of 32,965 breakends, 11,075 two-breakend events
+  and 4,685 DEL, DUP and INV events):
+
+  | Source | Sites | Breakends with a site within 100 bases | Events matched by breakpoints | Events matched by reciprocal overlap |
+  |---|---|---|---|---|
+  | `gnomad_sv` | 2,154,486 | 15,392 | 1,307 | 1,347 |
+  | `kgp_sv` | 173,366 | 3,283 | 478 | 559 |
+  | `dbvar_nstd166` | 308,858 | 3,494 | 444 | 556 |
+  | `dbvar_nstd200` | 299,040 | 2,912 | 492 | 635 |
+
+- Full cohort with the lead block, gene roles and fusion genes,
+  2026-11-23 (`postOA.sh` job 13347029, branch `feat/sv-columns`; log
+  `out/logs/other/postOA.13347029.out`): the same 21,890 events, 458
+  columns (454 + `start_gene_role`, `end_gene_role`, `fusion_gene_5p`,
+  `fusion_gene_3p`), the first 53 in the order of the lead block. The
+  first run (job 13346246) stopped at the dictionary check as intended
+  and listed the 4 added columns; the new dictionary was reviewed (458
+  columns; no description, type or list field of an existing column
+  changed; existing columns only reordered) and copied over
+  `docs/sv_cohort_filtered.columns.csv`. Every check was TRUE,
+  including `gene_roles_equal`, `fusion_genes_equal`,
+  `linx_tables_equal` and `parquet_equal`. Column types as in the
+  previous build, with `list<string>` 68. The BAM, population, region
+  and cross-sample counts equal those of job 13303561.
+  - Gene role elements: start breakends ONCO 345, TSG 752, empty
+    42,485; end breakends ONCO 198, TSG 449, empty 20,767.
+  - Fusion elements: 2,342 (1,171 fusions, each listed on its 5' and
+    its 3' SV); names `<5' gene>_<3' gene>` 2,318, enhancer-named 24
+    (the 12 fusions in Joins, each on two SVs), other 0. 9 distinct
+    reported fusions (group, name).
+
+  These counts are the ones `SV_Cohort_Code_Changes.md` (project
+  folder) predicted from the previous table. The spot check (section
+  1.5) was run on the table of job 13303561; the code of the columns it
+  checks did not change in this build.
+
 #### Changes after review
 
 Found while writing this section and fixed in `svCohort.R` on
@@ -849,3 +1227,78 @@ Found while writing this section and fixed in `svCohort.R` on
 - `own_germline_*` was empty, not 0, for a matched group whose
   germline file has no records; matched groups are now taken from
   `normal_id` in `samples.tsv`.
+
+### 1.5 `docs/scripts/spotCheckSvCohort.R`: spot check of the computed columns
+
+```
+Rscript --vanilla Prism/docs/scripts/spotCheckSvCohort.R OUT_DIR DB_DIR TRACK_DIR HMF_DIR [N] [N_BAM]
+```
+
+Run it by hand after a build, as a job (about 10 minutes for the
+defaults); `postOA.sh` does not run it. It needs `bcftools`
+(`BCFTOOLS`, default `/admin/software/bcftools/bcftools-1.20/bin/bcftools`)
+and `samtools` on the `PATH`.
+
+Step 4 rebuilds the source values from the table; it does not
+recompute the columns Prism computes. This script recomputes them for
+a random sample of events by a second method, written separately from
+`svCohort.R` (a plain filter per breakend instead of interval
+overlaps; `bcftools` and `samtools` instead of the R and pysam
+readers), and compares the result with the TSV. It samples N events
+(default 300, any FILTER, fixed seed 20261122), takes their breakends
+(the start, and the end of two-breakend events), and of those N_BAM
+breakends (default 40) for the BAM recount. It exits with status 1 if
+any value differs, and prints the differences.
+
+| Check | Columns | Second method |
+|---|---|---|
+| `region_bed` | the 17 GIAB tracks and the ENCODE blacklist (18) | the BED rows with start < POS <= end |
+| `region_labels` | ENCODE blacklist reason; RepeatMasker name, class, family (4) | the set of labels of the intervals that contain POS |
+| `region_hmf` | `region_hmf_sv_prep_blacklist`, `region_hmf_unmap` (2) | the two files, with 1 added to the start of the `.bed` file only |
+| `centromere` | `region_centromere_distance` (1) | the bases strictly between POS and the nearest centromere model interval of the chromosome (0 inside or adjacent) |
+| `xs_breakend` | `xs_<set>_groups_exact`, `_w50`, `_group_list_w50`, `own_germline_*` (11) | every record of the three sets, read with `bcftools query` |
+| `xs_pair` | `xs_pair_<set>_*` (6) | every `MATEID`-linked pair of the sets |
+| `bam_own` | `bam_tumor_depth`, `bam_tumor_clip_n`, `bam_tumor_split_n` (3) | `samtools view -F 0x704` of the breakend's region, the SAM text parsed in R |
+| `bam_others` | `bam_other_normals_*`, `bam_other_tumors_*` (12) | recomputed from the per-BAM files |
+| `pop_breakend` | `<source>_w100_n`, `_max_af` (8) | every site of the source table |
+| `pop_event` | `<source>_bp100_*`, `<source>_ro50_*` (32) | every site of the source table |
+
+What it does not cover: of the BAM measures, only `depth`, `clip_n`
+and `split_n` of the own tumor are recounted, on N_BAM breakends;
+`bam_others` and the population checks start from the same per-BAM
+files and site tables as `svCohort.R`, so they check the summaries and
+the matching, not the recount (`bamEvidence.py`) or the reduction to
+sites (`popSvSites.sh`, checked by its record counts). Lists are
+compared as sets.
+
+**Result.** Job 13317208, 2026-11-23, on the table of job 13303561
+(log `spotCheck.13317208.out` in the project folder): 300 events, 458
+breakends, 40 of them recounted with samtools. Every value was equal:
+31,772 values in 97 columns.
+
+Job 13361310, 2026-11-23, on the 458-column table of job 13347029
+(log `spotCheck.13361310.out`): the same seed, 300 events and 458
+breakends, and the same result, every value equal (31,772 values in 97
+columns; per-check counts as below). The columns added in job 13347029
+(gene roles, fusion genes) are checked by `checkSvCohort.R`, not here.
+
+| Check | Columns | Values | Equal |
+|---|---|---|---|
+| `region_bed` | 18 | 8,244 | 8,244 |
+| `region_labels` | 4 | 1,832 | 1,832 |
+| `region_hmf` | 2 | 916 | 916 |
+| `centromere` | 1 | 458 | 458 |
+| `xs_breakend` | 11 | 5,038 | 5,038 |
+| `xs_pair` | 6 | 948 | 948 |
+| `bam_others` | 12 | 5,496 | 5,496 |
+| `bam_own` | 3 | 120 | 120 |
+| `pop_breakend` | 8 | 3,664 | 3,664 |
+| `pop_event` | 32 | 5,056 | 5,056 |
+
+Two earlier runs failed because of errors in the spot-check script, not
+in the table. Job 13304919 stopped when a helper was given integers
+(it now converts to text first). Job 13314940 reported 11 of 40
+`bam_tumor_split_n` values as 0 where the table is empty: the script
+read the empty `end_id` of one-breakend events as a mate ID. Now it
+reads it as missing, and the table's value (empty without a mate) is
+confirmed.

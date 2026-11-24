@@ -658,7 +658,9 @@ spanning reads) into
 `res/prism/db/bam_evidence/<sample>.bam_evidence.tsv.gz`. It reads
 `res/prism/db/samples.tsv`, written by the first step of `postOA.sh`;
 on a new run, start `postOA.sh` once (it stops at its second step
-without the BAM counts), then `bamEvidence.sh`, then `postOA.sh`.
+without the BAM counts), or run that first step alone, as a job
+(`Rscript --vanilla Prism/scripts/postOA.R --out-dir out --res-dir
+res/prism/db`), then `bamEvidence.sh`, then `postOA.sh`.
 
 `postOA.sh` runs four steps: `scripts/postOA.R` (stacked LINX tables),
 `scripts/svCohort.R` (the SV event table as TSV),
@@ -790,6 +792,27 @@ Python) are in `docs/prism_methods.md`.
 The log `postOA.<jobid>.out` is moved to `OUT_DIR/logs/other/` at the
 end of the job. A rerun replaces the files. The job asks for 2 CPUs,
 32 GB and 1 hour.
+
+Then build the SV report, the workbook people read (about a minute;
+rerun after every `postOA.sh` build):
+
+```bash
+Rscript --vanilla Prism/scripts/svReport.R [DB_DIR] [OUT_DIR]
+```
+
+It reads only `res/prism/db/sv_cohort_filtered.parquet` and writes
+`res/prism/sv/prism_sv_report.xlsx` (sheets `fusions_real`, `genes`,
+`events_hc`, `events_all`, `rule`, `glossary`) and
+`res/prism/sv/prism_sv_events.csv`. Rows are the PASS events; genes and
+fusions come from LINX; five flags mark evidence that an event may not
+be a real tumor event (split reads in the group's own normal, the same
+event in another group's calls or BAMs, a population SV site matching
+both breakpoints, a LINX ARTIFACT cluster, a low-mappability or
+blacklisted region), and events with no flag are the high-confidence
+set. LINX's gene columns are not the nearest gene: LINX attaches genes
+containing a breakend or starting up to 100 kb after it, and none on
+the 3' side. `docs/SV_REPORT.md` describes the report, the flags and
+the LINX rules in full.
 
 ## 8. Optional controls
 

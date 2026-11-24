@@ -132,7 +132,9 @@ All commands are run from the project folder.
    `res/prism/db/bam_evidence/<sample>.bam_evidence.tsv.gz` for each
    tumor and normal; it reads `res/prism/db/samples.tsv`, so on a new
    run start `postOA.sh` once first (it stops at step 2 without the
-   BAM counts).
+   BAM counts), or run its first step alone, as a job (`Rscript
+   --vanilla Prism/scripts/postOA.R --out-dir out --res-dir
+   res/prism/db`).
 
    `postOA.sh` writes to `res/prism/db/`:
    - `data/linx_*.tsv.gz`: each per-sample LINX table of every group
@@ -142,7 +144,8 @@ All commands are run from the project folder.
      every group; germline `svs`, `breakend`, `disruption`, `clusters`,
      `links` and `driver_catalog` for groups with a matched normal.
    - `sv_cohort_filtered.parquet`: the SV event table, the core
-     analysis table. One row per somatic SV event: every record of
+     analysis table and the evidence store behind the SV report (step
+     7). One row per somatic SV event: every record of
      PURPLE's `purple.sv.vcf.gz` (all FILTER values; nothing left out),
      with every field PURPLE (VCF INFO and FORMAT of tumor and normal),
      ESVEE (`breakend.tsv`) and LINX (SV, cluster, breakends per
@@ -162,7 +165,8 @@ All commands are run from the project folder.
      `source("Prism/examples/readSvCohort.R")` loads it as `sv` with
      its dictionary `sv_dict` and helpers for the list columns
      (`sv_find()`, `sv_transcripts()`, `sv_fusions()`, `sv_links()`,
-     `sv_cluster_drivers()`); in Python, read it with pyarrow or
+     `sv_cluster_drivers()`, and `sv_flatten()` to join every list
+     with `|`, one row per event); in Python, read it with pyarrow or
      polars.
    - `sv_cohort_filtered.tsv.gz`: the same table as text; lists joined
      with `|` (VCF lists with `,`, LINX `svs.tsv` lists with `;`).
@@ -195,13 +199,40 @@ All commands are run from the project folder.
    of events by a second method (bcftools, samtools) and compares them
    with the table (run it as a job; about 10 minutes).
 
+7. Build the SV report from the SV event table (about a minute, little
+   memory; run it after every `postOA.sh` build):
+
+   ```
+   Rscript --vanilla Prism/scripts/svReport.R [DB_DIR] [OUT_DIR]
+   ```
+
+   It reads only `res/prism/db/sv_cohort_filtered.parquet` and writes
+   `res/prism/sv/prism_sv_report.xlsx` and
+   `res/prism/sv/prism_sv_events.csv`. The workbook has one row per
+   PASS somatic SV event (`events_all`) with LINX's genes and fusions
+   and five evidence flags (split reads in the group's own normal; the
+   same event in other groups' calls or BAMs; a population SV site
+   matching both breakpoints; a LINX ARTIFACT cluster; a low-mappability
+   or blacklisted region). Events with no flag are the high-confidence
+   set (`events_hc`). The `fusions_real` sheet (fusions of two
+   different genes; LINX fusions of a gene with itself are left out of
+   it and of the gene fusion counts, and kept on the events sheets) and the
+   `genes` sheet (genes with 2 or more tumors in at
+   least one count) count tumors over high-confidence and over all PASS
+   events and list the tumors (`samples`); `rule` defines the flags and
+   what each removes; `glossary` describes every column. It needs
+   `Rscript` with `tidyverse`, `fs`, `nanoparquet` and `openxlsx`.
+   Details, including the LINX rules behind each gene column:
+   `docs/SV_REPORT.md`.
+
 Outputs go to the project folder, not to `Prism/`:
 
 - `out/`: pipeline results (`outdir` in `conf/params.yaml`)
 - `res/prism/`: deliverables made after the pipeline from `out/`
   (`res/prism/qc/hmf/` from `qcCohort.sh`, `res/prism/cohort/` from
-  `cohortReport.sh`, `res/prism/db/` from `postOA.sh`); their logs
-  go to `out/logs/other/`
+  `cohortReport.sh`, `res/prism/db/` from `postOA.sh`,
+  `res/prism/sv/` from `scripts/svReport.R`); their logs go to
+  `out/logs/other/`
 - `oncoanalyser.<jobid>.out`: head job log (sbatch only)
 - `.nextflow.log`, `.nextflow/`: Nextflow log and run history
 
@@ -261,6 +292,7 @@ Prism/
     postOA.R                 stacks the LINX tables (run by postOA.sh)
     svCohort.R               builds the SV event table (run by postOA.sh)
     tsvToParquet.py          writes its typed Parquet copy (run by postOA.sh)
+    svReport.R               SV report workbook from the SV event table, into res/prism/sv/
     bamEvidence.py           counts the reads of one BAM at every breakend (run by bamEvidence.sh)
     fetchTracks.sh           downloads the region tracks and population SV call sets postOA.sh uses
     popSvSites.sh            reduces the population SV call sets to site tables (job)
@@ -324,9 +356,15 @@ are not removed automatically.
 - `docs/sv_cohort_filtered.columns.csv`: the reviewed column dictionary
   of the SV event table (name, description, type, list fields); a build
   stops if its dictionary differs
-- `docs/LINX_tables.md`: why LINX writes seven somatic SV tables,
-  what one row of each is, how they link, and R examples on the
-  `res/prism/db` tables
+- `docs/LINX_tables.md`: the seven LINX somatic SV tables Prism
+  stacks, what one row of each is, which genes LINX attaches to a
+  breakend, how the tables link, and R examples on the `res/prism/db`
+  tables
+- `docs/SV_REPORT.md`: the SV report (`scripts/svReport.R`): why it
+  exists, every sheet and column, how high-confidence events are
+  decided and from which evidence, the LINX rules behind the gene and
+  fusion columns (checked in the LINX code), how the SV table is built,
+  and the issues met building it
 - `docs/OA_AlgoKey.md`: what each Hartwig tool name (PURPLE, AMBER,
   ...) means in plain words
 - `docs/dbScheme/`: which output file first holds each per-sample

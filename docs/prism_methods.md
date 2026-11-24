@@ -24,6 +24,12 @@ wrote:
 - a confidence tier, if one is ever added, is a column, never a filter;
 - an error stops the run; nothing fails silently.
 
+The SV report (section 2) has a confidence column and two user-decided
+exceptions in its summary sheets only (same-gene LINX fusions left out
+of the fusion sheet and gene fusion counts; genes in fewer than 2
+tumors left out of the genes sheet); its events sheet keeps every PASS
+event with every value it shows.
+
 ## Software
 
 | Software | Version | Source of the version |
@@ -34,14 +40,14 @@ wrote:
 | LINX | 2.3.1 | same file; also `samples.tsv` column `linx_version` |
 | R | 4.5.1 | `Rscript` on the `PATH` of the job |
 | Bioconductor | 3.22: GenomicRanges 1.62.1, IRanges 2.44.0, S4Vectors 0.48.1 | same |
-| CRAN | tidyverse 2.0.0 (dplyr 1.2.1, readr 2.2.0, tidyr 1.3.2, stringr 1.6.0, purrr 1.2.2), fs 2.1.0, nanoparquet 0.5.2 | same |
+| CRAN | tidyverse 2.0.0 (dplyr 1.2.1, readr 2.2.0, tidyr 1.3.2, stringr 1.6.0, purrr 1.2.2), fs 2.1.0, nanoparquet 0.5.2, openxlsx 4.2.9 (`svReport.R` only) | same |
 | Python | 3.10.14, pyarrow 25.0.1 | `python3` on the `PATH` of the job |
 | pysam | 0.24.0 (its own htslib 1.23.1) | `python3` on the `PATH` of the `bamEvidence.sh` job |
 | bcftools | 1.20 | `/admin/software/bcftools/bcftools-1.20/bin/bcftools` (`BCFTOOLS` in `popSvSites.sh` and `spotCheckSvCohort.R`); first line of the `popSvSites.sh` log |
 | samtools | 1.20 (htslib 1.20) | `samtools` on the `PATH`; used by `spotCheckSvCohort.R` only |
 
-The R and pyarrow versions were read on 2026-11-22, pysam and samtools
-on 2026-11-23, from the `Rscript`, `python3` and `samtools` on the
+The R and pyarrow versions were read on 2026-11-22, pysam, samtools
+and openxlsx on 2026-11-23, from the `Rscript`, `python3` and `samtools` on the
 `PATH` of the jobs. `postOA.sh` and `bamEvidence.sh` do not log them.
 To record them for a run, use the same environment as the job and run
 (a few seconds):
@@ -216,8 +222,10 @@ group in VCF order of their start record.
 Column order:
 
 1. the lead block (user decision, table below): the event, the genes
-   at each breakend with their role and LINX's annotation, fusions,
-   cluster drivers and category, copy number and support;
+   LINX attaches to each breakend (genes containing it or starting up
+   to 100 kb after it; `SV_REPORT.md` section 5) with their role and
+   LINX's annotation, fusions, cluster drivers and category, copy
+   number and support;
 2. the other key columns (table further below);
 3. event-level columns: fields with the same value on both breakends,
    stored once, without a `start_`/`end_` prefix (see Unpacking, rule
@@ -1036,7 +1044,10 @@ table as `sv` and the dictionary as `sv_dict`, checks that they have
 the same columns, and defines `sv_find()` (dictionary rows whose name
 or description matches a pattern) and `sv_transcripts()`,
 `sv_fusions()`, `sv_links()`, `sv_cluster_drivers()` (one row per
-element of a list family, with the event's keys in front). Its comments
+element of a list family, with the event's keys in front), and
+`sv_flatten()` (one row per event, every list column joined into one
+string with `|`; a missing element is an empty slot, so positions stay
+aligned; an empty list is NA). Its comments
 end with worked examples.
 
 ```r
@@ -1200,15 +1211,29 @@ the region and cross-sample columns.
   and cross-sample counts equal those of job 13303561.
   - Gene role elements: start breakends ONCO 345, TSG 752, empty
     42,485; end breakends ONCO 198, TSG 449, empty 20,767.
-  - Fusion elements: 2,342 (1,171 fusions, each listed on its 5' and
-    its 3' SV); names `<5' gene>_<3' gene>` 2,318, enhancer-named 24
-    (the 12 fusions in Joins, each on two SVs), other 0. 9 distinct
-    reported fusions (group, name).
+  - Fusion elements: 2,342 (1,171 fusions, each listed once for the SV
+    of its 5' breakend and once for the SV of its 3' breakend: 1,149
+    fusions have both on one SV, which lists them twice; 22 chained
+    fusions are on two SVs, once on each); names `<5' gene>_<3' gene>`
+    2,318, enhancer-named 24 (the 12 fusions in Joins, each made by one
+    SV and listed twice on it), other 0. 9 distinct reported fusions
+    (group, name).
 
   These counts are the ones `SV_Cohort_Code_Changes.md` (project
   folder) predicted from the previous table. The spot check (section
-  1.5) was run on the table of job 13303561; the code of the columns it
-  checks did not change in this build.
+  1.5) was run on this table too (job 13361310), with every value
+  equal.
+
+- Rebuild from scratch, 2026-11-23, after `res/` was removed: `postOA.R`
+  alone (job 13376213) to write `samples.tsv`, `bamEvidence.sh` (array
+  job 13376222, 23 tasks, 23 BAMs, 758,195 rows), then `postOA.sh` (job
+  13376226, log `out/logs/other/postOA.13376226.out`, Prism `180d01f`
+  with no uncommitted changes). Result: 21,890 events x 458 columns,
+  column dictionary equal to the reviewed copy, every check TRUE
+  (`linx_tables_equal`, `gene_roles_equal`, `fusion_genes_equal`,
+  `parquet_equal`, all per-group checks); one column empty in every row
+  (`end_info_INFERRED`), as before. This is the table the SV report
+  (section 2) reads.
 
 #### Changes after review
 
@@ -1302,3 +1327,46 @@ in the table. Job 13304919 stopped when a helper was given integers
 read the empty `end_id` of one-breakend events as a mate ID. Now it
 reads it as missing, and the table's value (empty without a mate) is
 confirmed.
+
+## 2. `scripts/svReport.R`: the SV report
+
+The SV report is the workbook people read about the somatic SVs:
+one row per PASS event with the genes and fusions LINX gives it, five
+evidence flags, and a high-confidence set (events with no flag), plus
+gene and fusion sheets that count tumors over high-confidence and over
+all PASS events. It reads only the SV table of section 1
+(`res/prism/db/sv_cohort_filtered.parquet`) and writes
+`res/prism/sv/prism_sv_report.xlsx` and `prism_sv_events.csv`:
+
+```
+Rscript --vanilla Prism/scripts/svReport.R [DB_DIR] [OUT_DIR]
+```
+
+Its full description is a document of its own, `SV_REPORT.md`: why it
+exists, every sheet and column, the five flags with their exact
+definitions and the SV table columns behind them, the LINX rules behind
+the gene and fusion columns (checked in the LINX code at `linx-v2.3.1`),
+the checks, the issues met building it, and the results of this run.
+Keep the two in step: a change to `svReport.R` changes `SV_REPORT.md`.
+
+Two exceptions to the project rule, both user decisions of 2026-11-23
+and both limited to summary sheets (`events_all` keeps every PASS event
+and every LINX fusion of it):
+
+- LINX fusions whose 5' and 3' breakends are in the same gene join two
+  parts of one gene (intragenic rearrangements, which the user treats
+  as cryptic splice products), not two genes. They are left out of the
+  fusion sheet, named `fusions_real`, and of the gene fusion counts
+  (96 fusions on 101 events in this run, counted in the `rule` sheet).
+- The `genes` sheet lists genes with 2 or more tumors in at least one
+  count.
+
+The high-confidence set follows the project rule: it is a column
+(`high_confidence`, with `n_flags` and the five `flag_*` columns), and
+the `events_all` sheet keeps every PASS event. The flag rule is the
+user's decision of 2026-11-23.
+
+**Result.** 2026-11-23, on the table of `postOA.sh` job 13376226:
+12,216 PASS events, 4,180 high confidence (no flag); flags set:
+LINX ARTIFACT 4,233, region 3,363, other patients 2,338, population
+1,006, own normal 34 (`SV_REPORT.md` section 6.6).

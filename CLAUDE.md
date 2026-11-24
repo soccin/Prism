@@ -38,6 +38,7 @@ sbatch ./Prism/postOA.sh [-t TRACK_DIR] [OUT_DIR]       # cohort tables into res
 Rscript --vanilla Prism/docs/scripts/checkLinx.R [OUT_DIR]  # recheck the LINX rows of docs/ACTUAL_METHODS.md
 Rscript --vanilla Prism/docs/scripts/checkSvCohort.R [OUT_DIR] [DB_DIR] [HMF_DIR]  # rebuild the sources from sv_cohort_filtered and compare; recompute gene roles and fusion genes; check the Parquet copy (postOA.sh step 4)
 Rscript --vanilla Prism/docs/scripts/spotCheckSvCohort.R OUT_DIR DB_DIR TRACK_DIR HMF_DIR  # recompute the derived columns of a random sample by a second method (as a job: about 10 minutes)
+Rscript --vanilla Prism/scripts/svReport.R [DB_DIR] [OUT_DIR]  # SV report workbook (PASS events, LINX genes and fusions, five flags, high-confidence set) into res/prism/sv/; about a minute
 Rscript Prism/docs/dbScheme/scripts/fetchOrangeDatamodel.R orange-v5.0.1 DATAMODEL_DIR  # ORANGE data model sources
 Rscript Prism/docs/dbScheme/scripts/buildScheme.R --datamodel DATAMODEL_DIR --out-dir out  # rebuild docs/dbScheme tables
 ```
@@ -144,6 +145,32 @@ columns (region, `xs_*`, `bam_*`, population); after a change to them,
 also run `docs/scripts/spotCheckSvCohort.R` as a job and record the
 result in `prism_methods.md` section 1.5.
 
+`scripts/svReport.R` turns the SV table into the workbook people read
+(`res/prism/sv/prism_sv_report.xlsx`): PASS events only, gene and
+fusion columns from LINX only (no other annotation; user decision),
+five evidence flags, high confidence = no flag (user decision
+2026-11-23), gene and fusion sheets counted in tumors, a `rule` sheet
+and a `glossary` sheet. Same-gene LINX fusions (`gene_5p` = `gene_3p`)
+join two parts of one gene (the user treats them as cryptic splice
+products; LINX calls no splicing), left out of the fusion sheet
+(`fusions_real`) and the
+gene fusion counts, kept on the events sheets; `genes`
+keeps genes with 2 or more tumors in at least one count (user
+decisions). It stops if a column has no glossary entry or
+an entry matches no column. `docs/SV_REPORT.md` describes it in full,
+including the LINX rules behind each gene column; change the two
+together, and rerun the report after every `postOA.sh` build. The SV
+table is the evidence store behind the report, not the deliverable.
+
+Any statement about what a Hartwig tool does goes into
+`docs/ACTUAL_METHODS.md` (or `SV_REPORT.md`) only after it is checked
+in the tool's source at the tag the run used (sparse clone of
+`hartwigmedical/hmftools` at e.g. `linx-v2.3.1`) and, where possible,
+against the run's files; cite the class and method. Where the README
+disagrees, record it in `ACTUAL_METHODS.md` section 5. The LINX README
+is wrong about `svs.tsv` `geneStart`/`geneEnd`, `breakend.tsv` rows and
+the artifact rules.
+
 Post-pipeline layout (user decision): deliverables go under
 `res/prism/` in the folder that holds `out/` (the project folder), with
 the files people read (PDFs, sample lists) at the top of each folder
@@ -161,7 +188,7 @@ Checks after a change (there is no test suite):
 ```
 bash -n Prism/runOncoanalyser.sh Prism/deliverLocal.sh Prism/qcCohort.sh Prism/cohortReport.sh Prism/postOA.sh Prism/bamEvidence.sh Prism/scripts/fetchTracks.sh Prism/scripts/popSvSites.sh Prism/docs/scripts/countVcfFilters.sh
 shellcheck -x Prism/runOncoanalyser.sh Prism/00.SETUP.sh Prism/deliverLocal.sh Prism/qcCohort.sh Prism/cohortReport.sh Prism/postOA.sh Prism/bamEvidence.sh Prism/scripts/fetchTracks.sh Prism/scripts/popSvSites.sh Prism/docs/scripts/countVcfFilters.sh
-Rscript --vanilla -e "for (f in c('Prism/scripts/cohortReport.R', 'Prism/scripts/postOA.R', 'Prism/scripts/svCohort.R', 'Prism/docs/scripts/checkLinx.R', 'Prism/docs/scripts/checkSvCohort.R', 'Prism/docs/scripts/spotCheckSvCohort.R', 'Prism/examples/readSvCohort.R')) invisible(parse(f))"
+Rscript --vanilla -e "for (f in c('Prism/scripts/cohortReport.R', 'Prism/scripts/postOA.R', 'Prism/scripts/svCohort.R', 'Prism/docs/scripts/checkLinx.R', 'Prism/docs/scripts/checkSvCohort.R', 'Prism/docs/scripts/spotCheckSvCohort.R', 'Prism/scripts/svReport.R', 'Prism/examples/readSvCohort.R')) invisible(parse(f))"
 Rscript --vanilla -e "for (f in Sys.glob('Prism/docs/dbScheme/scripts/*.R')) invisible(parse(f))"
 python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' Prism/scripts/tsvToParquet.py
 python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' Prism/scripts/bamEvidence.py

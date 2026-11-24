@@ -178,10 +178,12 @@ linx_tables <- tribble(
     "upperSvId join svs.svId; clusterId joins clusters."
   ),
   "somatic", "breakend", str_c(
-    "One row per SV breakend and gene transcript LINX matched it to ",
-    "(regionType: where in the gene; canonical: true for the canonical ",
-    "transcript, most rows), with disruptive and reportedStatus. Key id; ",
-    "svId joins svs."
+    "One row per SV breakend and transcript LINX writes for it: the ",
+    "canonical transcript of every gene whose span contains the breakend ",
+    "or whose 5' end is up to 100 kb after it, plus driver panel and ",
+    "fusion transcripts (regionType: where relative to the transcript, ",
+    "most rows UPSTREAM; canonical: true for most rows), with disruptive ",
+    "and reportedStatus. Key id; svId joins svs."
   ),
   "somatic", "fusion", str_c(
     "One row per fusion LINX found; reported: true for those LINX ",
@@ -202,9 +204,9 @@ linx_tables <- tribble(
     "germline clusters."
   ),
   "germline", "breakend", str_c(
-    "One row per germline SV breakend and gene transcript LINX matched it ",
-    "to, with disruptive and reportedStatus. Key id; svId joins germline ",
-    "svs."
+    "One row per germline SV breakend and gene transcript LINX writes for ",
+    "it (LINX loads canonical transcripts only in germline mode), with ",
+    "disruptive and reportedStatus. Key id; svId joins germline svs."
   ),
   "germline", "disruption", str_c(
     "LINX's germline disruption list: one row per germline SV and gene, ",

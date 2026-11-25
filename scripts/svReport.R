@@ -228,7 +228,13 @@ flag_text <- c(
 only_one <- events$n_flags == 1
 rule <- tibble(
   item = c(flag_cols, "high_confidence"),
-  definition = c(flag_text[flag_cols], "No flag set. A flag is evidence, not proof; the flags are a rule chosen for this report (2026-11-23)."),
+  definition = c(flag_text[flag_cols], str_glue(
+    "A high-confidence event is a PASS somatic SV with no sign of being an artifact: its break has no support in ",
+    "the patient's normal, isn't seen in other patients or in population SV databases, isn't called an artifact by ",
+    "LINX, and isn't in a hard-to-map region. In this cohort {sum(events$high_confidence)} of {nrow(events)} PASS ",
+    "events qualify. Technically: no flag set. A flag is evidence, not proof; the flags are a rule chosen for this ",
+    "report (2026-11-23)."
+  )),
   pass_events_flagged = c(map_int(flag_cols, \(c) sum(events[[c]])), sum(events$high_confidence)),
   flagged_by_this_flag_only = c(map_int(flag_cols, \(c) sum(events[[c]] & only_one)), NA_integer_)
 ) |>

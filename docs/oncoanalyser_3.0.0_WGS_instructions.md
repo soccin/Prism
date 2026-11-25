@@ -814,6 +814,19 @@ containing a breakend or starting up to 100 kb after it, and none on
 the 3' side. `docs/SV_REPORT.md` describes the report, the flags and
 the LINX rules in full.
 
+Then collect the SV records of the ORANGE JSON files (seconds):
+
+```bash
+Rscript --vanilla Prism/scripts/orangeSvReport.R [OUT_DIR] [DB_DIR] [SV_DIR]
+```
+
+It writes `res/prism/sv/orange_sv_report.xlsx` (sheets `fusions`,
+`somatic_breakends`, `germline_breakends`, `samples`, `about`,
+`glossary`): every fusion and breakend ORANGE lists (LINX reported
+fusions and REPORTED breakends), with the ORANGE fields unchanged, each
+placed on its SV table event with the event's FILTER and its SV report
+flags. `docs/SV_REPORT.md` section 13 describes it.
+
 ## 8. Optional controls
 
 - Skip tools: `--processes_exclude virusinterpreter,orange`

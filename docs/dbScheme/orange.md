@@ -125,6 +125,9 @@ for the immune escape flags, and those can be recomputed from the
 PURPLE driver catalog, gene copy numbers and LINX breakends using the
 rules above. The tool files give the selection back through their own
 flags (REPORTED in the VCF, `reportedStatus`, `reported`).
+`scripts/orangeSvReport.R` collects the JSON's `linx` records of all
+samples and checks on every run that they are exactly those flagged
+LINX rows (`SV_REPORT.md` section 13). ORANGE tests no SV FILTER value.
 
 Tumor-only samples have `referenceId`, `chord`, `cuppa`, `peach`,
 `sigAllocations` and all germline sections null, because the tools

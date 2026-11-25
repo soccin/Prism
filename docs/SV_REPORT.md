@@ -30,6 +30,7 @@ Contents:
 10. Issues we had making it
 11. Results of this run
 12. Open points
+13. The ORANGE SV report (`scripts/orangeSvReport.R`)
 
 ## 1. Why the report exists
 
@@ -831,3 +832,139 @@ groups (9 with a matched normal, 5 tumor-only), report rebuilt on
   which found no split read there. Tumor-only groups have no normal,
   so neither test applies to them.
 - A nearest-gene column is not provided (decision 2026-11-23).
+
+## 13. The ORANGE SV report (`scripts/orangeSvReport.R`)
+
+ORANGE, the last step of oncoanalyser, writes for each sample a JSON
+file (`orange/<sample>.orange.json`) and a PDF. Its `linx` section is
+the pipeline's own short list of SVs. `orangeSvReport.R` collects those
+records from every sample into `res/prism/sv/orange_sv_report.xlsx`,
+with the ORANGE fields unchanged. It places each record on its SV
+table event, so that the event's FILTER and its flags in the SV report
+can be read beside it (user request, 2026-11-25).
+
+### 13.1 What ORANGE lists
+
+Checked in the ORANGE source at tag `orange-v5.0.1`:
+
+| JSON list | Records | Code |
+|---|---|---|
+| `linx.fusions` | LINX `fusion.tsv` rows with `reported` true | `LinxDataLoader.loadFusions` |
+| `linx.somaticBreakends` | LINX `breakend.tsv` rows with `reportedStatus` REPORTED | `LinxBreakendInterpreter.buildSomaticBreakends` |
+| `linx.germlineBreakends` | LINX germline `breakend.tsv` rows with `reportedStatus` REPORTED; null when there is no germline LINX run (tumor-only groups) | `LinxBreakendInterpreter.buildGermlineBreakends` |
+
+ORANGE tests no SV FILTER value. Its SVs are the ones LINX analyzed:
+somatic FILTER PASS or INFERRED (PON records are not analyzed) and
+germline PASS or PON (`ACTUAL_METHODS.md`, LINX). LINX sets REPORTED
+only on a disruptive breakend in a driver gene panel gene with
+disruption reporting on, and never marks a breakend of an inferred SV
+disruptive (`ACTUAL_METHODS.md`). So a breakend of an INFERRED SV is
+never listed. ORANGE's code would not exclude a reported fusion with an
+inferred breakend; this run has none.
+
+A fusion record holds no coordinates and no breakend IDs: genes,
+transcripts, fused exons, type, phase, chain links, domains and a
+junction copy number. For the enhancer types (ENHANCER_KNOWN_PAIR,
+ENHANCER_PROMISCUOUS) `geneUp` is the 5' breakend's transcript ID,
+which LINX sets to the IG or TCR region name (`LinxInterpreter`).
+
+### 13.2 Running it
+
+```
+Rscript --vanilla Prism/scripts/orangeSvReport.R [OUT_DIR] [DB_DIR] [SV_DIR]
+```
+
+Run from the project folder after `svReport.R`. `OUT_DIR` (the
+oncoanalyser output) defaults to `out`, `DB_DIR` to `res/prism/db`,
+`SV_DIR` to `res/prism/sv`. It reads the ORANGE JSON of every sample in
+`DB_DIR/samples.tsv`, the SV table (`sv_cohort_filtered.parquet`, 10
+columns), the stacked LINX tables in `DB_DIR/data` and
+`SV_DIR/prism_sv_events.csv`, and writes
+`SV_DIR/orange_sv_report.xlsx`. It takes a few seconds. It needs the R
+packages `tidyverse`, `fs`, `nanoparquet`, `jsonlite` and `openxlsx`.
+The workbook has an explicit window size, Arial font, a frozen header
+row on every sheet and filters on the data sheets.
+
+### 13.3 The workbook
+
+| Sheet | One row is | Rows (this run) |
+|---|---|---|
+| `fusions` | an ORANGE fusion | 9 |
+| `somatic_breakends` | an ORANGE somatic breakend record (one per breakend and transcript) | 159 |
+| `germline_breakends` | an ORANGE germline breakend record | 2 |
+| `samples` | a sample, with its record counts | 14 |
+| `about` | a record type or term, with its definition and counts | 6 |
+| `glossary` | a column name, the sheets that have it, and what it holds | 95 |
+
+In the data sheets the ORANGE fields come first, as ORANGE wrote them
+(the glossary marks them "ORANGE:"). The columns after them are added
+(marked "Added:"):
+
+- `somatic_breakends`: `event_key`, `vcf_filter`, `breakend_side`
+  (start or end of the event), `in_sv_report`, and from the SV report
+  `high_confidence`, `n_flags` and the five `flag_*` columns.
+- `fusions`: the LINX `fivePrimeCoords` and `threePrimeCoords`, then for
+  each end the event (`event_key_5p`, `_3p`), its FILTER, whether it is
+  in the SV report, `high_confidence` and the flags set (`flags_5p`,
+  `_3p`, names without the `flag_` prefix).
+- `germline_breakends`: the SV's coordinates, FILTER, quality and
+  fragment counts from LINX germline `disruption.tsv`. Germline SVs are
+  not in the SV table or the SV report.
+
+### 13.4 How records are linked
+
+- A somatic breakend is placed on the SV table event with the same
+  sample and LINX `svId` (`linx_svId`); `breakend_side` is the end of
+  the event with the same chromosome, position and orientation.
+- A fusion is matched to its LINX `fusion.tsv` row (reported true) on
+  sample, the 5' and 3' transcripts, fused exons, reported type, phase
+  and chain links. The 5' and 3' breakend IDs of that row give the two
+  SVs and so the two events (one event if one SV makes the fusion).
+- A germline breakend is matched to the LINX germline `disruption.tsv`
+  row with the same sample, `svId` and gene.
+
+### 13.5 Checks
+
+The run stops, naming the problem, if:
+
+- a sample's JSON is missing, or its `sampleId` differs from
+  `samples.tsv`;
+- `germlineBreakends` is null for a group with a normal, or present for
+  a tumor-only group;
+- the somatic or germline breakend records are not exactly the
+  `breakend.tsv` rows with `reportedStatus` REPORTED (same sample, id,
+  svId, gene and transcript, none missing on either side);
+- the fusions do not match the reported `fusion.tsv` rows one to one,
+  or `geneUp`/`geneDown` differ from the LINX breakend genes (by the
+  rule in 13.1);
+- a record's SV is not in the SV table, or its position is at neither
+  end of its event (germline: of its LINX germline SV);
+- `prism_sv_events.csv` does not hold exactly the PASS events of the
+  SV table (rerun `svReport.R`);
+- a column has no glossary entry, or an entry matches no column.
+
+These checks also test, on every run, the reading of the ORANGE code
+in 13.1.
+
+### 13.6 Results of this run
+
+2026-11-25, SV table of `postOA.sh` job 13376226, SV report of
+2026-11-23:
+
+- 9 fusions on 9 PASS events, each made by one SV; all reported type
+  PROMISCUOUS_5 or PROMISCUOUS_3 with likelihood LOW; 3 events high
+  confidence (flags on the other 6: LINX artifact 5, region 2).
+- 159 somatic breakend records on 152 PASS events (116 BND, 12 INV, 11
+  DEL, 11 DUP, 9 SGL records); 71 events high confidence. Every record
+  is disruptive, on a canonical transcript, driver type DISRUPTION.
+- 2 germline breakends, in 2 of the 9 groups with a normal (both DUP).
+- No record is on an INFERRED or PON event.
+
+The cohort report (`res/prism/cohort/prism_report.xlsx`,
+`cohortReport.R`, which reads the LINX and PURPLE files, not ORANGE)
+was compared with the SV report the same day: every SV row of its
+`disruptions`, `fusions`, `sv_same_breakpoint` and
+`genes_of_interest_events` sheets, and every DISRUPTION entry of
+`drivers`, is a PASS event of the SV report. Its `sv_total` (sheet
+`samples`) counts every SV LINX analyzed, 20,457 in all, which includes
+the 8,241 INFERRED events that the SV report leaves out.

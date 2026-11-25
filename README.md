@@ -225,13 +225,27 @@ All commands are run from the project folder.
    Details, including the LINX rules behind each gene column:
    `docs/SV_REPORT.md`.
 
+8. Collect the SV records of the ORANGE JSON files (seconds; run it
+   after `svReport.R`):
+
+   ```
+   Rscript --vanilla Prism/scripts/orangeSvReport.R [OUT_DIR] [DB_DIR] [SV_DIR]
+   ```
+
+   It writes `res/prism/sv/orange_sv_report.xlsx`: every ORANGE fusion,
+   somatic breakend and germline breakend of every sample, with the
+   ORANGE fields unchanged, each placed on its SV table event with the
+   event's FILTER and its SV report flags and `high_confidence`. It
+   also needs `jsonlite`. Details: `docs/SV_REPORT.md` section 13.
+
 Outputs go to the project folder, not to `Prism/`:
 
 - `out/`: pipeline results (`outdir` in `conf/params.yaml`)
 - `res/prism/`: deliverables made after the pipeline from `out/`
   (`res/prism/qc/hmf/` from `qcCohort.sh`, `res/prism/cohort/` from
   `cohortReport.sh`, `res/prism/db/` from `postOA.sh`,
-  `res/prism/sv/` from `scripts/svReport.R`); their logs go to
+  `res/prism/sv/` from `scripts/svReport.R` and
+  `scripts/orangeSvReport.R`); their logs go to
   `out/logs/other/`
 - `oncoanalyser.<jobid>.out`: head job log (sbatch only)
 - `.nextflow.log`, `.nextflow/`: Nextflow log and run history
@@ -293,6 +307,7 @@ Prism/
     svCohort.R               builds the SV event table (run by postOA.sh)
     tsvToParquet.py          writes its typed Parquet copy (run by postOA.sh)
     svReport.R               SV report workbook from the SV event table, into res/prism/sv/
+    orangeSvReport.R         ORANGE JSON SV records linked to the SV report, into res/prism/sv/
     bamEvidence.py           counts the reads of one BAM at every breakend (run by bamEvidence.sh)
     fetchTracks.sh           downloads the region tracks and population SV call sets postOA.sh uses
     popSvSites.sh            reduces the population SV call sets to site tables (job)
@@ -364,7 +379,9 @@ are not removed automatically.
   exists, every sheet and column, how high-confidence events are
   decided and from which evidence, the LINX rules behind the gene and
   fusion columns (checked in the LINX code), how the SV table is built,
-  and the issues met building it
+  and the issues met building it; section 13: the ORANGE SV report
+  (`scripts/orangeSvReport.R`) and what ORANGE lists (checked in the
+  ORANGE code)
 - `docs/OA_AlgoKey.md`: what each Hartwig tool name (PURPLE, AMBER,
   ...) means in plain words
 - `docs/dbScheme/`: which output file first holds each per-sample

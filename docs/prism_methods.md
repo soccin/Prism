@@ -40,7 +40,7 @@ event with every value it shows.
 | LINX | 2.3.1 | same file; also `samples.tsv` column `linx_version` |
 | R | 4.5.1 | `Rscript` on the `PATH` of the job |
 | Bioconductor | 3.22: GenomicRanges 1.62.1, IRanges 2.44.0, S4Vectors 0.48.1 | same |
-| CRAN | tidyverse 2.0.0 (dplyr 1.2.1, readr 2.2.0, tidyr 1.3.2, stringr 1.6.0, purrr 1.2.2), fs 2.1.0, nanoparquet 0.5.2, openxlsx 4.2.9 (`svReport.R` only) | same |
+| CRAN | tidyverse 2.0.0 (dplyr 1.2.1, readr 2.2.0, tidyr 1.3.2, stringr 1.6.0, purrr 1.2.2), fs 2.1.0, nanoparquet 0.5.2, openxlsx 4.2.9 (`svReport.R`, `orangeSvReport.R`), jsonlite 2.0.0 (`orangeSvReport.R`) | same |
 | Python | 3.10.14, pyarrow 25.0.1 | `python3` on the `PATH` of the job |
 | pysam | 0.24.0 (its own htslib 1.23.1) | `python3` on the `PATH` of the `bamEvidence.sh` job |
 | bcftools | 1.20 | `/admin/software/bcftools/bcftools-1.20/bin/bcftools` (`BCFTOOLS` in `popSvSites.sh` and `spotCheckSvCohort.R`); first line of the `popSvSites.sh` log |
@@ -1387,3 +1387,31 @@ of the 10,145 two-breakend PASS events; 1,051 high-confidence
 two-breakend events share one breakend with another group's calls; and
 1,395 of the 1,883 high-confidence translocations are in the four
 groups PURPLE fits at purity 0.18 to 0.21.
+
+## 3. `scripts/orangeSvReport.R`: the ORANGE SV report
+
+ORANGE's JSON (`out/<group>/orange/<sample>.orange.json`) lists the
+pipeline's own short list of SVs: LINX fusions with `reported` true,
+and somatic and germline LINX breakend rows with `reportedStatus`
+REPORTED (ORANGE 5.0.1 source, `LinxDataLoader`,
+`LinxBreakendInterpreter`). ORANGE tests no SV FILTER value; its SVs
+are the ones LINX analyzed (somatic PASS and INFERRED, germline PASS
+and PON). This script collects those records of every sample, with the
+ORANGE fields unchanged, places each on its SV table event (by sample
+and LINX `svId`; fusions through their LINX `fusion.tsv` row) and adds
+the event's FILTER and its SV report flags and `high_confidence`. It
+writes `res/prism/sv/orange_sv_report.xlsx`:
+
+```
+Rscript --vanilla Prism/scripts/orangeSvReport.R [OUT_DIR] [DB_DIR] [SV_DIR]
+```
+
+Run it after `svReport.R`. It stops if the JSON records are not exactly
+the LINX rows the ORANGE code selects, if a record cannot be placed on
+its event, or if `prism_sv_events.csv` does not hold the PASS events of
+the SV table. Full description: `SV_REPORT.md` section 13.
+
+**Result.** 2026-11-25, on the table of `postOA.sh` job 13376226: 9
+fusions on 9 PASS events (3 high confidence), 159 somatic breakend
+records on 152 PASS events (71 high confidence), 2 germline breakends;
+no record on an INFERRED or PON event.

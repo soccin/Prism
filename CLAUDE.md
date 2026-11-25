@@ -39,6 +39,7 @@ Rscript --vanilla Prism/docs/scripts/checkLinx.R [OUT_DIR]  # recheck the LINX r
 Rscript --vanilla Prism/docs/scripts/checkSvCohort.R [OUT_DIR] [DB_DIR] [HMF_DIR]  # rebuild the sources from sv_cohort_filtered and compare; recompute gene roles and fusion genes; check the Parquet copy (postOA.sh step 4)
 Rscript --vanilla Prism/docs/scripts/spotCheckSvCohort.R OUT_DIR DB_DIR TRACK_DIR HMF_DIR  # recompute the derived columns of a random sample by a second method (as a job: about 10 minutes)
 Rscript --vanilla Prism/scripts/svReport.R [DB_DIR] [OUT_DIR]  # SV report workbook (PASS events, LINX genes and fusions, five flags, high-confidence set) into res/prism/sv/; about a minute
+Rscript --vanilla Prism/scripts/orangeSvReport.R [OUT_DIR] [DB_DIR] [SV_DIR]  # after svReport.R: ORANGE JSON SV records (fusions, somatic and germline breakends) of all samples, linked to SV table events and SV report flags, into res/prism/sv/orange_sv_report.xlsx; seconds
 Rscript Prism/docs/dbScheme/scripts/fetchOrangeDatamodel.R orange-v5.0.1 DATAMODEL_DIR  # ORANGE data model sources
 Rscript Prism/docs/dbScheme/scripts/buildScheme.R --datamodel DATAMODEL_DIR --out-dir out  # rebuild docs/dbScheme tables
 ```
@@ -164,6 +165,16 @@ including the LINX rules behind each gene column; change the two
 together, and rerun the report after every `postOA.sh` build. The SV
 table is the evidence store behind the report, not the deliverable.
 
+`scripts/orangeSvReport.R` writes `res/prism/sv/orange_sv_report.xlsx`:
+the SV records of every ORANGE JSON (`linx.fusions`,
+`linx.somaticBreakends`, `linx.germlineBreakends`), ORANGE fields
+unchanged, each placed on its SV table event (sample and LINX `svId`;
+fusions through their reported `fusion.tsv` row) with the event's
+FILTER and SV report flags added. ORANGE 5.0.1 lists reported LINX
+fusions and REPORTED breakends and tests no FILTER value; the script
+stops if the JSON is not exactly those LINX rows. Run it after
+`svReport.R`; described in `docs/SV_REPORT.md` section 13.
+
 Any statement about what a Hartwig tool does goes into
 `docs/ACTUAL_METHODS.md` (or `SV_REPORT.md`) only after it is checked
 in the tool's source at the tag the run used (sparse clone of
@@ -190,7 +201,7 @@ Checks after a change (there is no test suite):
 ```
 bash -n Prism/runOncoanalyser.sh Prism/deliverLocal.sh Prism/qcCohort.sh Prism/cohortReport.sh Prism/postOA.sh Prism/bamEvidence.sh Prism/scripts/fetchTracks.sh Prism/scripts/popSvSites.sh Prism/docs/scripts/countVcfFilters.sh
 shellcheck -x Prism/runOncoanalyser.sh Prism/00.SETUP.sh Prism/deliverLocal.sh Prism/qcCohort.sh Prism/cohortReport.sh Prism/postOA.sh Prism/bamEvidence.sh Prism/scripts/fetchTracks.sh Prism/scripts/popSvSites.sh Prism/docs/scripts/countVcfFilters.sh
-Rscript --vanilla -e "for (f in c('Prism/scripts/cohortReport.R', 'Prism/scripts/postOA.R', 'Prism/scripts/svCohort.R', 'Prism/docs/scripts/checkLinx.R', 'Prism/docs/scripts/checkSvCohort.R', 'Prism/docs/scripts/spotCheckSvCohort.R', 'Prism/scripts/svReport.R', 'Prism/examples/readSvCohort.R')) invisible(parse(f))"
+Rscript --vanilla -e "for (f in c('Prism/scripts/cohortReport.R', 'Prism/scripts/postOA.R', 'Prism/scripts/svCohort.R', 'Prism/docs/scripts/checkLinx.R', 'Prism/docs/scripts/checkSvCohort.R', 'Prism/docs/scripts/spotCheckSvCohort.R', 'Prism/scripts/svReport.R', 'Prism/scripts/orangeSvReport.R', 'Prism/examples/readSvCohort.R')) invisible(parse(f))"
 Rscript --vanilla -e "for (f in Sys.glob('Prism/docs/dbScheme/scripts/*.R')) invisible(parse(f))"
 python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' Prism/scripts/tsvToParquet.py
 python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' Prism/scripts/bamEvidence.py

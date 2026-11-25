@@ -10,6 +10,7 @@
 #   prism_sv_report.xlsx   sheets: fusions_real, genes, events_hc,
 #                          events_all, rule, glossary (every column of
 #                          every sheet, once per column name)
+#   prism_sv_events.csv    the events_all sheet
 #
 # User decisions of 2026-11-23: a LINX fusion with the same gene at both
 # ends joins two parts of one gene (treated by the user as a cryptic
@@ -17,7 +18,6 @@
 # fusions_real and of the fusion counts of genes (kept on the events
 # sheets); the genes sheet lists only genes with 2 or more tumors in
 # at least one count; fusions_real and genes have a samples column.
-#   prism_sv_events.csv    the events_all sheet
 #
 # Genes come from LINX only: start_gene/end_gene are LINX svs.tsv
 # geneStart/geneEnd (genes whose span contains the breakend, or with a
@@ -62,6 +62,29 @@ out_dir <- if (length(args) > 1) args[2] else "res/prism/sv"
 dir_create(out_dir)
 
 sv <- nanoparquet::read_parquet(path(db_dir, "sv_cohort_filtered.parquet")) |> as_tibble()
+
+# Every SV table column the report reads. A missing one stops the run:
+# in the region test a missing column would otherwise count as "not in
+# the track" for every event.
+both_ends <- \(x) c(str_c("start_", x), str_c("end_", x))
+required <- c(
+  "group_id", "sample_id", "event_key", "normal_id", "n_breakends", "in_linx", "filter", "linx_type",
+  "start_chrom", "start_pos", "start_orient", "end_chrom", "end_pos", "end_orient", "length",
+  both_ends(c("linx_bnd_n", "linx_bnd_gene", "gene_role", "linx_bnd_canonical", "linx_bnd_disruptive",
+              "linx_bnd_reportedStatus")),
+  "linx_fusion_name", "linx_fusion_reported", "linx_fusion_phased", "fusion_gene_5p", "fusion_gene_3p",
+  both_ends(c("bam_normal_split_n", "bam_other_normals_split_samples", "bam_other_tumors_split_samples")),
+  "xs_pair_somatic_groups_w50", "xs_pair_germline_groups_w50", "start_xs_somatic_groups_w50",
+  "start_xs_germline_groups_w50", "xs_pair_somatic_group_list_w50", "xs_pair_germline_group_list_w50",
+  "gnomad_sv_bp100_n", "kgp_sv_bp100_n", "dbvar_nstd166_bp100_n", "dbvar_nstd200_bp100_n",
+  both_ends(str_c("region_", c("giab_lowmappability", "encode_blacklist", "hmf_sv_prep_blacklist", "hmf_unmap"))),
+  "linx_geneStart", "linx_geneEnd", "linx_cluster_category", "linx_cluster_resolvedType",
+  "linx_cluster_clusterCount", "tumor_VF", "start_info_PURPLE_AF", "end_info_PURPLE_AF"
+)
+absent <- setdiff(required, names(sv))
+if (length(absent) > 0) stop("SV table columns not found: ", str_c(absent, collapse = ", "), call. = FALSE)
+if (anyNA(sv$filter)) stop("events without a FILTER value", call. = FALSE)
+
 pass <- sv |> filter(filter == "PASS")
 if (!all(pass$in_linx)) stop("PASS events not in LINX", call. = FALSE)
 if (anyDuplicated(pass$event_key)) stop("event_key not unique", call. = FALSE)
@@ -80,6 +103,15 @@ bnd_long <- map(c("start", "end"), \(s) {
     mutate(side = s)
 }) |>
   bind_rows()
+# One row per LINX transcript row, none lost or padded, and no missing
+# value in the fields the gene columns are made from (a missing value
+# would drop the gene without notice).
+if (nrow(bnd_long) != sum(pass$start_linx_bnd_n, pass$end_linx_bnd_n, na.rm = TRUE)) {
+  stop("LINX breakend lists do not unpack to one row per transcript row", call. = FALSE)
+}
+if (bnd_long |> select(gene, canonical, disruptive, reported) |> map_lgl(anyNA) |> any()) {
+  stop("missing values in the LINX breakend lists (gene, canonical, disruptive or reportedStatus)", call. = FALSE)
+}
 
 side_genes <- bnd_long |>
   group_by(event_key, side) |>
@@ -100,9 +132,17 @@ if (anyDuplicated(gene_role$gene)) stop("a gene with two driver panel roles", ca
 fusion_long <- pass |>
   select(group_id, sample_id, event_key, name = linx_fusion_name, reported = linx_fusion_reported,
          phased = linx_fusion_phased, gene_5p = fusion_gene_5p, gene_3p = fusion_gene_3p) |>
-  unnest(c(name, reported, phased, gene_5p, gene_3p)) |>
-  distinct(group_id, sample_id, event_key, name, .keep_all = TRUE)
-if (anyNA(fusion_long$gene_5p) || anyNA(fusion_long$gene_3p)) stop("fusion without a 5' or 3' gene", call. = FALSE)
+  unnest(c(name, reported, phased, gene_5p, gene_3p))
+if (fusion_long |> select(name, reported, gene_5p, gene_3p) |> map_lgl(anyNA) |> any()) {
+  stop("fusion without a name, reported value, or 5' or 3' gene", call. = FALSE)
+}
+# One entry per fusion name and event is kept below; that loses nothing
+# only if the entries of one name on one event agree.
+n_entries <- \(...) nrow(distinct(fusion_long, ...))
+if (n_entries(event_key, name, reported, gene_5p, gene_3p) != n_entries(event_key, name)) {
+  stop("entries of one LINX fusion name on one event differ in reported or in the 5' or 3' gene", call. = FALSE)
+}
+fusion_long <- fusion_long |> distinct(group_id, sample_id, event_key, name, .keep_all = TRUE)
 
 # The events sheets list every LINX fusion of the event (user decision,
 # 2026-11-23).

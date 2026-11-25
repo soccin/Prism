@@ -156,8 +156,10 @@ products; LINX calls no splicing), left out of the fusion sheet
 (`fusions_real`) and the
 gene fusion counts, kept on the events sheets; `genes`
 keeps genes with 2 or more tumors in at least one count (user
-decisions). It stops if a column has no glossary entry or
-an entry matches no column. `docs/SV_REPORT.md` describes it in full,
+decisions). It stops if an SV table column it reads is missing, if a
+column has no glossary entry or an entry matches no column (all its
+checks: `docs/SV_REPORT.md` section 9; what "no flag" does and does
+not prove: section 6.7). `docs/SV_REPORT.md` describes it in full,
 including the LINX rules behind each gene column; change the two
 together, and rerun the report after every `postOA.sh` build. The SV
 table is the evidence store behind the report, not the deliverable.

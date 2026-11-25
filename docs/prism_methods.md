@@ -764,7 +764,12 @@ pairs 1000 bases.
 This is a recount from the alignments, not a copy of ESVEE's counts.
 ESVEE assembles the reads, so it also counts reads that extend into an
 inserted sequence or a repeat without a clip at POS; `clip_n` and
-`split_n` can be lower than the VCF's `SF`.
+`split_n` can be lower than the VCF's `SF`. Measured on the NKTCL run
+(2026-11-25): `bam_tumor_split_n` is 0 at both breakends for 4,940 of
+the 10,145 two-breakend PASS events, all of which have `SF` of 1 or
+more (750 have more than 50). A `split_n` of 0 in another BAM is
+therefore not evidence that the event is absent there
+(`SV_REPORT.md` section 6.7).
 
 A task stops if the read groups of its BAM do not all name the sample
 (`SM`), if a PURPLE VCF is missing, if a record lacks one ID, REF or
@@ -1370,3 +1375,15 @@ user's decision of 2026-11-23.
 12,216 PASS events, 4,180 high confidence (no flag); flags set:
 LINX ARTIFACT 4,233, region 3,363, other patients 2,338, population
 1,006, own normal 34 (`SV_REPORT.md` section 6.6).
+
+**Review.** 2026-11-25: every sheet recomputed from the TSV copy of the
+table with separate code and compared with the workbook, no cell
+different. Checks added to `svReport.R` for a missing column, a missing
+FILTER value, the LINX transcript lists and the fusion entries
+(`SV_REPORT.md` section 9); the workbook is unchanged. The same review
+measured what "no flag" does not cover (`SV_REPORT.md` section 6.7):
+the BAM recount finds no split read in the event's own tumor for 4,940
+of the 10,145 two-breakend PASS events; 1,051 high-confidence
+two-breakend events share one breakend with another group's calls; and
+1,395 of the 1,883 high-confidence translocations are in the four
+groups PURPLE fits at purity 0.18 to 0.21.

@@ -351,7 +351,9 @@ Duplicate, secondary, QC-fail and unmapped reads are skipped; no
 mapping-quality threshold. It is empty for tumor-only groups and for
 single breakends (no mate), so the flag can only be set for
 two-breakend events of the 9 groups with a matched normal
-(`has_normal`). Set on 34 events.
+(`has_normal`). Set on 34 events. The recount finds no split read in
+the event's own tumor for about half of the two-breakend PASS events,
+so for those a count of 0 in the normal is not informative (6.7).
 
 ### 6.2 `flag_other_patients`
 
@@ -491,6 +493,114 @@ Number of flags per event: 0 for 4,180; 1 for 5,573; 2 for 1,995; 3 for
   report shows `tumor_fragments`, `start_af` and `end_af` but sets no
   threshold on them.
 
+The next five limits were measured in the review of 2026-11-25 (same
+table and report; group names are left out of this document). They do
+not change what the script does; they say how much "no flag" proves.
+
+- **The BAM recount cannot see about half of the events it tests.**
+  For 4,940 of the 10,145 two-breakend PASS events the recount finds no
+  split read at either breakend in the event's own tumor BAM
+  (`bam_tumor_split_n` 0), although ESVEE counts split fragments for
+  every one of them (`SF` 1 or more; more than 50 for 750). What goes
+  with it in the counts: inserted sequence at the junction (events over
+  1,000 bases or between chromosomes: 34% without a split read when no
+  base is inserted, 70% with more than 20 inserted bases); short events
+  (81% of DUP and 66% of DEL under 50 bases, 73% of INS); and low
+  mapping quality at a breakend (82% where the mean is 20 or less, 27%
+  where it is above 55; long events without inserted bases). In one
+  event read by hand (`SF` 207) 96 reads were clipped at one breakend
+  and none at the mate, a segment ESVEE's assembly placed with mapping
+  quality 9 and a second possible location (`ALTALN`): the recount
+  needs the aligner to have put the read's other part at ESVEE's mate
+  position. For such an event a count of 0 in
+  the normal, or in another group's BAM, says nothing. Of the 1,834
+  high-confidence two-breakend events in matched groups, 797 have no
+  split read in their own tumor, so their own-normal test could not
+  have seen them. `flag_own_normal` not set means "the recount found no
+  split read in the normal", not "the normal has no support".
+- **ESVEE's own count in the normal is not read.** The PURPLE SV VCF
+  has the normal's fragment counts (SV table `normal_VF`), made by the
+  same assembly as the tumor's. 282 PASS events of matched groups have
+  `normal_VF` above 0 (1 or 2 fragments in all but 7). 86 of them are
+  high confidence (68 two-breakend events, 18 single breakends); 71 of
+  those 86 carry PURPLE's `TINC_RECOVERED` ("Variant recovered from
+  germline filters by TINC detection": PURPLE kept them as somatic and
+  put the normal's fragments down to tumor DNA in the normal; 4 groups
+  have such events). Of the 34 events with `flag_own_normal`, 15 have
+  `normal_VF` above 0 and 19 do not: the two counts see different
+  events.
+- **A two-breakend event that shares one breakend with another group is
+  not flagged.** The call match needs the pair for a two-breakend event
+  and one breakend for a single breakend (6.2). 1,051 of the 3,632
+  high-confidence two-breakend events have one breakend within 50 bases
+  (same orientation) of a record in another group's somatic or germline
+  set; for 1,019 it is a germline record, and for 712 the position is
+  the same base. 811 are translocations; the shared end of those at a
+  germline record lies in a SINE in 279 and in a simple repeat in 257
+  of 787. One tumor-only group has 363 of its 587 high-confidence
+  two-breakend events at another group's germline record; the three
+  cell lines have 26 to 39 each. If breakends were spread evenly over
+  the genome, about 1 event in 70 would be at one (431,057 germline
+  records in 9 groups; an estimate, not a test).
+
+  What the shared record is (recomputed from the germline VCFs; the
+  matches equal the table's `xs_germline_groups_w50` at all 7,264
+  breakends). It is not the same event in another patient, and mostly
+  not a single breakend: for 479 of the 1,019 events the other groups'
+  records at that breakend are ends of two-breakend calls only, for 366
+  both kinds, for 174 single breakends only. The mate of such a
+  two-breakend record lies on another chromosome than the event's other
+  breakend in 1,534 of 1,789 matches (86%), and never within 50 bases
+  of it. So the same base is a junction end in other patients' normal
+  samples, joined there to another place. "Germline set" means calls in
+  normal samples, not inherited variants: 132,126 of its 431,057
+  records (31%) are BND, about 7,300 translocations per normal. In the
+  largest tumor-only group the raw allele fraction at these events has
+  a median of 0.16 (0.14 at its other events), not the 0.5 of an
+  inherited heterozygous variant.
+
+  What the patient's own normal shows (matched groups; "clipped" here:
+  `bam_normal_clip_n` of 3 or more and at least 10% of
+  `bam_normal_depth`, a threshold set for this check): the shared
+  breakend is clipped in the own normal in 265 of 506 cases (52%), the
+  other breakend of the same events in 52 of 492 (11%), and the
+  breakends of high-confidence events with no shared breakend in 672 of
+  2,670 (25%; by group 2% to 7% in four groups and 15% to 43% in
+  five). In the tumor the shared breakend is clipped by the same
+  measure in 87% and the other breakend of the same events in 20%. So
+  the direct evidence is in the patient's own normal, not in the other
+  patients: reads end at that base in the normal too, without a split
+  read to the tumor's mate breakend (the event would otherwise carry
+  `flag_own_normal`). The report does not read `bam_normal_clip_n`.
+- **Insertions called as a translocation or a single breakend cannot
+  match a population site.** The population rule pairs BND events with
+  BND or CTX sites and does not test single breakends (6.3), so an
+  insertion that ESVEE reports as a junction to a repeat copy elsewhere
+  is never compared with the population sets' INS records. Against the
+  296,184 PASS INS sites of gnomAD-SV v4.1: 190 high-confidence BND and
+  SGL events have a breakend within 50 bases of one. That is 14.7% of
+  the high-confidence translocations and 12.3% of the high-confidence
+  single breakends of tumor-only groups, 4.2% and 2.0% in matched
+  groups; 0.95% of the genome lies within 50 bases of such a site.
+- **The LINX artifact flag depends on the purity PURPLE fits.** LOW_VAF
+  tests the junction copy number, which is purity adjusted (VCF header,
+  `PURPLE_JCN`: "Purity adjusted copy number of variant junction"). The
+  four groups PURPLE fits at purity 0.18 to 0.21 hold 1,395 of the
+  1,883 high-confidence translocations. Their high-confidence
+  translocations have a median of 6 to 16 tumor fragments and a median
+  raw allele fraction (VCF FORMAT `AF`) of 0.05 to 0.14. In a group
+  fitted at purity 0.90, translocations with the same raw support
+  (median 8 fragments, allele fraction 0.065) have a median junction
+  copy number of 0.15, and 92% of its PASS translocations are LOW_VAF.
+  The two matched groups with the fewest PASS translocations (11 and
+  13) have 4 and 2 that are high confidence. Whether the many
+  high-confidence translocations of the low-purity groups are real was
+  not established; section 1 records that this project found
+  patient-specific artifact translocations that thresholds do not
+  remove. 313 of the 519 high-confidence events with a LINX fusion are
+  translocations in five groups (those four and one fitted at purity
+  0.46).
+
 ## 7. The genes and fusions_real sheets
 
 Counts are numbers of tumors: distinct `sample_id` (one tumor per group
@@ -578,8 +688,16 @@ the list columns (`sv_flatten()` joins every list with `|`).
 
 `svReport.R` stops:
 
+- if a column it reads is missing from the SV table (in the region
+  test a missing column would otherwise count as "not in the track"),
+  or an event has no FILTER value;
 - if a PASS event is not in LINX, or `event_key` is not unique;
-- if a fusion has no 5' or 3' gene;
+- if the LINX transcript lists do not unpack to one row per
+  `breakend.tsv` row, or hold a missing `gene`, `canonical`,
+  `disruptive` or `reportedStatus` value;
+- if a fusion has no name, `reported` value, or 5' or 3' gene;
+- if the entries of one fusion name on one event differ in `reported`
+  or in the 5' or 3' gene (one entry per name and event is kept);
 - if a gene has two driver gene panel roles;
 - if the events sheet does not have one row per PASS event, or a
   `high_confidence` value is missing;
@@ -593,6 +711,22 @@ in the LINX transcript lists the report reads; fusion names unique per
 sample in `fusion.tsv`, and each name listed on an event either twice
 (both sides, same `reported` value) or once (chained); the numbers in
 sections 3, 4, 6 and 7 recomputed from the written workbook.
+
+Reviewed on 2026-11-25 (scripts in the session scratch folder, not
+part of the repo): every sheet was recomputed with separate code from
+the TSV copy of the SV table (not the Parquet file) and compared cell
+by cell with the workbook: `events_all` 12,216 x 34, `events_hc`
+4,180 x 34, `genes` 2,435 x 10 (roles taken from
+`DriverGenePanel.38.tsv`), `fusions_real` 1,066 x 8 and the events CSV,
+no cell different. Recomputed and equal: the sheet rows and same-gene
+fusion counts of section 3, the tables of sections 4 and 6.6, the
+counts of sections 5.5, 7 and 11, the first limit of 6.7, and the PASS
+counts by resolved type in 6.4 (the other numbers of 6.4 and of
+section 5 were not recomputed). The checks for missing columns, a
+missing FILTER value, the transcript lists and the fusion entries were
+added then; the workbook written with them is identical to the one
+before, and a test table without one region column stops the script.
+The same review measured the five limits at the end of section 6.7.
 
 ## 10. Issues we had making it
 
@@ -680,4 +814,20 @@ groups (9 with a matched normal, 5 tumor-only), report rebuilt on
 - The flag rule is the user's choice of 2026-11-23; changing it means
   editing `flag_*` in `svReport.R` and the `rule` sheet text together
   (the glossary points to the rule sheet).
+- The review of 2026-11-25 (6.7) left four rule questions undecided:
+  whether a two-breakend event with one breakend at another group's
+  germline record is flagged, or instead an event with a breakend
+  clipped in the patient's own normal (6.7, the direct test; it cannot
+  apply to tumor-only groups); whether BND and SGL events at a
+  population INS site are flagged; whether ESVEE's `normal_VF` is read
+  next to the recount; and whether the translocations of groups fitted
+  at low purity need a test on raw support. Until they are decided,
+  the `rule` sheet's sentence that a high-confidence event "has no
+  support in the patient's normal" rests on two tests: ESVEE's own
+  germline test, which in matched groups calls an event germline when
+  the normal allele fraction is at least 0.1 times the tumor's and the
+  normal has at least 0.01 times the tumor's fragments
+  (`CallerApplication.isGermline`, ESVEE 2.0.1), and the recount,
+  which found no split read there. Tumor-only groups have no normal,
+  so neither test applies to them.
 - A nearest-gene column is not provided (decision 2026-11-23).

@@ -305,7 +305,7 @@ What it sets:
 - `executor { queueSize = 200; submitRateLimit = '10 sec' }`. At 50,
   alignment used about half of `cmobic_cpu`, which fits about 91
   12-CPU tasks; 200 fills it, and the rest wait in SLURM with QOS
-  `priority`.
+  `priority`. Not yet tested at 200 (see `ISSUES.md`).
 - Singularity enabled, `autoMounts`, `cacheDir` on shared storage,
   `pullTimeout = '2h'`.
 - No writes to the node's `/tmp`. Each task (one SLURM job) gets its
@@ -354,12 +354,21 @@ Notes:
   reads was still killed with 144 GB and passed with 216 GB. Groups
   with few chimeric reads finished ESVEE in 10 to 75 min, so the larger
   request costs little for them. 24 CPUs ran ESVEE prep 1.4 to 2 times
-  faster than 12; 36 was no faster than 24.
-- `MaxRSS` (sacct) and `peak_rss` (trace) do not show how much memory
-  a Java tool needs: the module sets the heap to 95% of the request,
-  and the heap fills up to it.
+  faster than 12; 36 was no faster than 24. A resume with the current
+  settings (2026-11-18) ran the other large group (601 M chimeric
+  reads, 918 M prep BAM records) on 24 CPUs / 216 GB: passed on
+  attempt 1 in 3h56m, with no slowdown from a full heap. A group
+  larger than these may still be killed at the sort on 216 GB; it is
+  then retried on 432 GB.
+- `MaxRSS` (sacct) equals the request for every task that reads and
+  writes a lot of data, Java or not: also for alignment (bwa-mem2 and
+  sambamba, trace `peak_rss` 24 to 29 GB of 72), AMBER, COBALT and
+  BAMTOOLS. Do not size from it. The trace's `peak_rss` is usable,
+  except for Java tools whose heap fills to the request (SAGE) and for
+  ESVEE, where it is above the request.
 - SAGE somatic used 97% of 12 CPUs for 1 to 5.3 h. The gain from
-  24 CPUs is expected but not yet measured.
+  24 CPUs is expected but not yet measured: every SAGE somatic task
+  was cached in the 2026-11-18 resume. See `ISSUES.md`.
 - ESVEE asks for 32 CPUs / 96 GB in Hartwig's settings. That is less
   memory than the 144 GB on which the group above was still killed.
 - The docs' retry example uses `check_max(...)`, an old nf-core
@@ -609,6 +618,214 @@ sheets and columns that hold long text have fixed widths
 The log `cohortReport.<jobid>.out` is moved to `OUT_DIR/logs/other/`
 at the end of the job. A rerun replaces the workbooks and the CSVs. The
 job asks for 2 CPUs, 16 GB and 1 hour; 14 groups took under a minute.
+
+To build the cohort tables (once per site, download the region tracks
+and population SV call sets on the login node and reduce the call sets
+to site tables; once per run, count the reads at every SV breakend in
+every BAM):
+
+```bash
+./Prism/scripts/fetchTracks.sh [TRACK_DIR]
+sbatch ./Prism/scripts/popSvSites.sh [TRACK_DIR]
+./Prism/bamEvidence.sh [OUT_DIR]                     # prints the sbatch command
+sbatch --array=0-N ./Prism/bamEvidence.sh [OUT_DIR]
+sbatch ./Prism/postOA.sh [-t TRACK_DIR] [OUT_DIR]
+```
+
+`TRACK_DIR` defaults to
+`/scratch/core001/bic/socci/reference/prism_tracks/GRCh38`.
+`fetchTracks.sh` downloads GIAB genome stratifications v3.6 for GRCh38
+(the unions of all difficult regions and of low mappability and
+segmental duplications; low mappability; segmental duplications; tandem
+repeats and homopolymers; satellites; GC below 25% or above 65%; gaps;
+other difficult regions and each of its parts: false and collapsed
+duplications, population CNV false-positive regions, L1H, VDJ, MHC,
+KIR), the ENCODE blacklist v2, UCSC RepeatMasker and centromeres, and
+four short-read population SV call sets: gnomAD-SV v4.1, the 1000
+Genomes high-coverage SV set (3,202 samples), and gnomAD-SV v2.1 and
+CCDG as dbVar studies nstd166 and nstd200. Each goes into its own
+folder; `TRACK_DIR/tracks.tsv` lists the source URL, download date and
+md5 of each, and the check against the md5 the source publishes (GIAB
+list, gnomAD bucket, 1000 Genomes manifest). `popSvSites.sh` (bcftools
+1.20) writes `TRACK_DIR/<source>/sites.tsv.gz`, one line per VCF record
+with ID, positions, type, FILTER and AF.
+
+`bamEvidence.sh` runs `scripts/bamEvidence.py` (python3 with pysam)
+once per BAM (`OUT_DIR/<group>/alignments/<sample>/<sample>.redux.bam`,
+tumors and normals): it counts the reads at every breakend of every
+group's `purple.sv.vcf.gz` (depth, mapping quality, clipped, split and
+spanning reads) into
+`res/prism/db/bam_evidence/<sample>.bam_evidence.tsv.gz`. It reads
+`res/prism/db/samples.tsv`, written by the first step of `postOA.sh`;
+on a new run, start `postOA.sh` once (it stops at its second step
+without the BAM counts), or run that first step alone, as a job
+(`Rscript --vanilla Prism/scripts/postOA.R --out-dir out --res-dir
+res/prism/db`), then `bamEvidence.sh`, then `postOA.sh`.
+
+`postOA.sh` runs four steps: `scripts/postOA.R` (stacked LINX tables),
+`scripts/svCohort.R` (the SV event table as TSV),
+`scripts/tsvToParquet.py` (its typed Parquet copy) and
+`docs/scripts/checkSvCohort.R` (rebuilds the sources from the table,
+recomputes the gene roles and fusion genes, and checks the Parquet
+copy). It needs `Rscript --vanilla` with `tidyverse`,
+`fs`, `nanoparquet`, `GenomicRanges`, `IRanges` and `S4Vectors`, and
+`python3` with `pyarrow`; it checks for `nanoparquet` and `pyarrow`
+before it starts. All steps follow one rule: do not infer biology;
+faithfully preserve what is there. Every assumption is checked on every
+row, and a failed check stops the job.
+
+`scripts/postOA.R`: for each kind of table it stacks the files of all
+groups into one `.tsv.gz` in `res/prism/db/data/`, with `group_id`
+and `sample_id` in front. The lines are copied as the tool wrote them:
+no row is left out and no value is changed or reformatted. So far it
+covers the LINX tables:
+
+- somatic, every group: `svs`, `clusters`, `links`, `breakend`,
+  `fusion`, `drivers`, `driver_catalog`
+  (`linx/somatic_annotations/<sample_id>.linx.<table>.tsv`)
+- germline, groups with a matched normal: `svs`, `breakend`,
+  `disruption`, `clusters`, `links`, `driver_catalog`
+  (`linx/germline_annotations/<sample_id>.linx.germline.<table>.tsv`)
+
+LINX's `neoepitope` (input to NEO) and `vis_*` (input to the LINX
+plots) files are not aggregated. Which SVs LINX reads from PURPLE, and
+how its tables link to each other, is in `docs/ACTUAL_METHODS.md`
+(section 4, LINX) and in the descriptions in `manifest.tsv`. The script
+stops if a file is missing; it stops, and writes no further table, if
+the files of a table have different headers or a line has a different
+number of fields than its header. At the top of `res/prism/db/`:
+
+- `manifest.tsv`: each file, its tool and mode, the number of groups
+  and rows, the source path and what it holds
+- `samples.tsv`: per group, `sample_id` (the tumor, named by the PURPLE
+  purity file), `normal_id` (the other sample folder in `bamtools/`),
+  `run_mode` (PURPLE) and the LINX version
+- `rows_per_sample.tsv`: the rows each group adds to each table
+
+`scripts/svCohort.R` writes `res/prism/db/sv_cohort_filtered.tsv.gz`,
+the core analysis table, one row per somatic SV event; step 3 writes
+the same table as `sv_cohort_filtered.parquet`, the file to analyze:
+
+- Rows: every record of each group's PURPLE `purple.sv.vcf.gz` (FILTER
+  PASS, PON and INFERRED; nothing is left out). The two breakends of an
+  SV (linked by `MATEID`) form one row, with the first in the VCF as the
+  start; a single or inferred breakend forms one row. The script stops
+  unless the events account for every VCF record.
+- Per event, without a prefix: the VCF, FORMAT and ESVEE fields that
+  have the same value on both breakends of every SV (`qual`, `filter`,
+  `info_SVTYPE`, `tumor_VF` and others; 36 listed in the script, 35 of
+  them present in the 2-group test), stored once (checked).
+- Per breakend (`start_*`, `end_*`): the other VCF fields, INFO keys
+  (`info_*`) and FORMAT values of tumor and normal (`tumor_*`,
+  `normal_*`); the columns of ESVEE's
+  `esvee/<sample_id>.esvee.breakend.tsv` that no VCF field repeats
+  (`esvee_bnd_*`, joined on VCF ID = ESVEE `Id`; inferred breakends
+  have none); LINX's `breakend.tsv` rows for that end, one list element
+  per transcript (`linx_bnd_*`); each region track
+  (`region_*`: in the track or not, RepeatMasker name, class and family,
+  ENCODE blacklist label, distance to the centromere model, Hartwig
+  `sv_prep_blacklist` and `unmap_regions`); the number and list of
+  other groups with a breakend at the same position, or within 50 bases,
+  with the same orientation, in their PURPLE somatic, PURPLE germline
+  and ESVEE unfiltered calls (`xs_*`), and the number of such
+  breakends in the group's own germline file (`own_germline_*`); the
+  driver gene panel role (ONCO, TSG) of each LINX breakend gene
+  (`gene_role`, a list aligned with `linx_bnd_gene`); the BAM read
+  counts of the group's own tumor and normal (`bam_tumor_*`,
+  `bam_normal_*`) and their summary over the other groups' normals and
+  tumors (`bam_other_normals_*`, `bam_other_tumors_*`); and the number
+  of population SV sites with a breakpoint within 100 bases, with their
+  highest AF (`<source>_w100_*`).
+- Per event: the LINX `svs.tsv` row (`linx_*`, joined on `vcfIdStart`),
+  its cluster (`linx_cluster_*`), fusions, links and cluster drivers
+  (lists), the gene at each fusion's 5' and 3' breakend
+  (`fusion_gene_5p`, `fusion_gene_3p`), whether the same two-breakend
+  event is in other groups (`xs_pair_*`), the population SV sites that
+  match the event by both breakpoints within 100 bases
+  (`<source>_bp100_*`) or, for DEL, DUP and INV, by 50% reciprocal
+  overlap (`<source>_ro50_*`), and derived columns (`n_breakends`,
+  `in_linx`, `same_chrom`, `length`, coordinates). For some SVs whose
+  two breakends share a position, LINX's start is the VCF end
+  (`linx_start_is_vcf_start` FALSE); LINX's columns are kept as LINX
+  wrote them.
+- Column order: a lead block of key columns first (the event, the
+  genes at each breakend with their role and LINX annotation, fusions,
+  cluster drivers and category, copy number and support), then the
+  other key columns, then the rest by source.
+
+- Unpacked for analysis, each step checked on every row: fixed pairs
+  split into two columns (`AD` ref/alt, `CIPOS` and `IHOMPOS`
+  lower/upper, `TPR` five/three prime span); PURPLE's `PURPLE_AF`,
+  `PURPLE_CN` and `PURPLE_CN_CHANGE` reduced to each breakend's own
+  value (PURPLE writes both breakends' values on each record); lists
+  that always hold one value kept as one value; columns that repeat
+  another column dropped (most ESVEE columns, `MATEID`). A VCF `.` is
+  stored as empty.
+- Lists of 1 to N values (LINX transcripts, fusions, links, drivers,
+  RepeatMasker labels, group lists, VCF lists such as `ASMLNKS`, LINX
+  `svs.tsv` lists such as `clusterReason`) are arrays in the Parquet
+  file and joined with `|`, `,` or `;` in the TSV.
+
+`res/prism/db/sv_cohort_filtered.columns.tsv` gives every column its
+description (from the VCF header where it has one), type, list
+separator and count column, and its number of non-empty values. It must
+equal the reviewed copy `docs/sv_cohort_filtered.columns.csv` (without
+the counts); otherwise the build stops before writing the table and
+writes the new dictionary as `sv_cohort_filtered.columns.new.csv` to
+review and copy over the reference.
+`scripts/tsvToParquet.py` converts every cell to that type (32-bit
+integers, so R reads them as integer) and stops on any value that does
+not fit. The last step, `docs/scripts/checkSvCohort.R`, undoes the
+unpacking, rebuilds every PURPLE VCF record and ESVEE row, compares
+them with the source files, recomputes the gene roles and fusion genes,
+and checks every Parquet cell against the TSV; the job fails if any
+check fails. It does not recompute the region, cross-sample, BAM and
+population columns; `docs/scripts/spotCheckSvCohort.R`, run by hand as
+a job, recomputes them for a random sample of events. The table, its
+Parquet copy and the dictionary are added to `manifest.tsv`. The exact
+definitions (event pairing, layout, joins, gene roles, fusion genes,
+unpacking rules and their sources, types, lists, coordinates, the 20
+tracks, the cross-sample sets, the BAM recount, the population call
+sets and match rules, the checks, how to read the Parquet file in R and
+Python) are in `docs/prism_methods.md`.
+
+The log `postOA.<jobid>.out` is moved to `OUT_DIR/logs/other/` at the
+end of the job. A rerun replaces the files. The job asks for 2 CPUs,
+32 GB and 1 hour.
+
+Then build the SV report, the workbook people read (about a minute;
+rerun after every `postOA.sh` build):
+
+```bash
+Rscript --vanilla Prism/scripts/svReport.R [DB_DIR] [OUT_DIR]
+```
+
+It reads only `res/prism/db/sv_cohort_filtered.parquet` and writes
+`res/prism/sv/prism_sv_report.xlsx` (sheets `fusions_real`, `genes`,
+`events_hc`, `events_all`, `rule`, `glossary`) and
+`res/prism/sv/prism_sv_events.csv`. Rows are the PASS events; genes and
+fusions come from LINX; five flags mark evidence that an event may not
+be a real tumor event (split reads in the group's own normal, the same
+event in another group's calls or BAMs, a population SV site matching
+both breakpoints, a LINX ARTIFACT cluster, a low-mappability or
+blacklisted region), and events with no flag are the high-confidence
+set. LINX's gene columns are not the nearest gene: LINX attaches genes
+containing a breakend or starting up to 100 kb after it, and none on
+the 3' side. `docs/SV_REPORT.md` describes the report, the flags and
+the LINX rules in full.
+
+Then collect the SV records of the ORANGE JSON files (seconds):
+
+```bash
+Rscript --vanilla Prism/scripts/orangeSvReport.R [OUT_DIR] [DB_DIR] [SV_DIR]
+```
+
+It writes `res/prism/sv/orange_sv_report.xlsx` (sheets `fusions`,
+`somatic_breakends`, `germline_breakends`, `samples`, `about`,
+`glossary`): every fusion and breakend ORANGE lists (LINX reported
+fusions and REPORTED breakends), with the ORANGE fields unchanged, each
+placed on its SV table event with the event's FILTER and its SV report
+flags. `docs/SV_REPORT.md` section 13 describes it.
 
 ## 8. Optional controls
 

@@ -5,7 +5,8 @@ wrapper for nf-core/oncoanalyser 3.0.0. First written 2026-11-13, when
 the pipeline was set up directly in a project folder. Rewritten
 2026-11-14, after that setup was moved into the Prism repo. Updated
 2026-11-18 after the first full runs (15 WGS groups): sections 5, 6, 9,
-10, 11, 14, 16 and the new section 17.
+10, 11, 14, 16 and the new section 17. Updated 2026-11-21 after a
+resume with the 2026-11-18 config: sections 14 and 17.
 
 Each new pipeline gets its own wrapper repo with its own name, and this
 file is copied into that repo's `docs/`. Read all of it, and these,
@@ -653,7 +654,20 @@ From oncoanalyser 3.0.0; look up the new pipeline's values.
   - These led to the ESVEE and SAGE somatic blocks, the retry-once
     rule, the QOS rule and the corrected `resourceLimits` (sections 6,
     10, 17).
-  - Not yet run: a resume or new run with the 2026-11-18 config.
+- **2026-11-18, resume with the 2026-11-18 config** (14 groups; the
+  15th was dropped for a data problem): finished OK in 4h28m.
+  - 19 tasks ran, all passed on attempt 1. No warnings or errors in
+    `.nextflow.log`. Every job had QOS `priority`; the longest queue
+    wait was 0.6 min.
+  - The ESVEE that had stopped run 2 passed on 24 CPUs / 216 GB in
+    3h56m (section 17).
+  - In an earlier, cancelled resume the same day, a PURPLE task exited
+    1 on a Circos plot error (data, not memory). The retry-once rule
+    reran it on 192 GB as intended.
+  - The config in the run checkout was the same as on `master`.
+- **Not yet tested** (the resume ran no alignment or SAGE task):
+  SAGE somatic on 24 CPUs, `queueSize = 200`. Listed in `ISSUES.md`
+  for the next full run.
 - Record results here when these are run.
 
 ## 15. Working with this user
@@ -726,6 +740,14 @@ submit time), `sacct`, `.nextflow.log` and each task's `.command.log`.
   limits each user's commands to a burst of 30, then about 2 per
   second (`SlurmctldParameters` `rl_*`), and alignment will submit up
   to 200 jobs at the start.
+- **Memory does not limit node packing on IRIS.** cmobic_cpu nodes
+  have 16 to 19 GB per allocatable CPU (about 1 TB on the 52-CPU
+  nodes, 1.5 TB on the 92-CPU nodes), and no request asks for more per
+  CPU (ESVEE 9 GB, PURPLE 16 GB). So tasks that request more memory
+  than they use (alignment 29 of 72 GB, VIRUSBREAKEND 16 of 72, REDUX
+  45 of 72) do not keep other jobs off a node; only unused CPUs do.
+- **Time limits:** no task used more than a third of its label time
+  (SAGE somatic, 5.3 h of 16 h).
 - **CPUs:** `%cpu / 100 / cpus` near 1 means more CPUs should help.
   - SAGE somatic: 0.97 of 12 CPUs.
   - ESVEE: about 0.6 of 12, about 13 cores busy at 24 threads, about
@@ -733,9 +755,20 @@ submit time), `sacct`, `.nextflow.log` and each task's `.command.log`.
     with 12, and no faster with 36 than with 24.
   - REDUX (0.4) and VIRUSBREAKEND (0.26) use far fewer CPUs than they
     request. This did not slow the run, so they were left alone.
+  - LINX visualiser: 0.93 of 6 CPUs, and the module passes
+    `-threads ${task.cpus}`. ORANGE waits for it. One group took
+    58 min and set that group's finish; the others took 22 min or
+    less. 12 CPUs may help such groups; not applied, not measured.
+- **`sacct` MaxRSS cannot size any I/O-heavy task.** It equals the
+  request for alignment (bwa-mem2 and sambamba, not Java), whose trace
+  `peak_rss` is 24 to 29 GB of 72, and for AMBER (trace 33 GB), COBALT
+  (14) and BAMTOOLS (7). Use the trace's `peak_rss` for those. It is
+  above the request for ESVEE (227 GB on 216), so it does not size
+  ESVEE either.
 - **Memory of Java tools:** the modules set `-Xmx` to 95% of the
-  request. The heap fills up to that, so `MaxRSS` and `peak_rss` show
-  about the request whether or not the task needed it. Look instead at:
+  request. For some tools (SAGE, ESVEE) the heap fills up to that, so
+  `peak_rss` shows about the request whether or not the task needed
+  it. Look instead at:
   - exit 1 with `java.lang.OutOfMemoryError` in `.command.err`;
   - SLURM state `OUT_OF_MEMORY` and exit 137 (`sacct`);
   - stage timings in `.command.log`. A heap near its limit shows as a
@@ -748,7 +781,17 @@ submit time), `sacct`, `.nextflow.log` and each task's `.command.log`.
   and run time tracked the number of chimeric reads (`pctChimeras` x
   total reads in a QC table, tumor plus normal). Groups above about
   300 M chimeric reads failed on 72 GB; one with 571 M was still
-  killed on 144 GB and passed on 216 GB.
+  killed on 144 GB and passed on 216 GB. The resume (2026-11-18)
+  confirmed 216 GB on 24 CPUs for the other large group (601 M
+  chimeric reads, 918 M prep BAM records): 3h56m on attempt 1, the
+  chromosome phase in 185 min against 201 to 212 min for the 571 M
+  group, and no late slowdown (a chromosome that took 84 min on 72 GB
+  took 7 min). A larger group may still be killed at the sort on
+  216 GB and is then retried on 432 GB.
+- **Tightest memory after the changes:** PURPLE on tumor-only samples
+  peaks at 69 to 73 GB of 96 (trace); PAVE somatic at 28 of 36 GB. A
+  heap error in either is retried once with double memory, which costs
+  minutes.
   Compute such a number before the run to know which groups will be
   slow.
 - **Which step sets a group's finish:** for each group, compare when

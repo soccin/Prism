@@ -50,3 +50,40 @@ To decide before bringing a table back:
 The table of the genes of interest with one row per gene and sample
 (`genes_of_interest`) was removed at the same time;
 `genes_of_interest_events` lists the events of those genes.
+
+## 2. Check resource settings on the next full run
+
+**Status:** open. Check after the next run from FASTQ.
+
+The 2026-11-18 `conf/iris.config` has so far run only in a resume,
+which ran ESVEE and the steps after it for a few groups. Results are
+in `docs/NF_SCRIPTING_INFO.md` sections 14 and 17. Not yet tested:
+
+- **SAGE somatic on `24 * task.attempt` CPUs.** Every SAGE somatic
+  task was cached in the resume. On 12 CPUs it used 97% of them and
+  took up to 5.3 h. Compare its realtime per group with the 12-CPU
+  runs; about 1.7 times faster is expected.
+- **`executor.queueSize = 200`.** The resume submitted 19 jobs. Look
+  for submission errors in `.nextflow.log` (SLURM allows a burst of
+  30 commands per user, then about 2 per second), and for queue waits
+  (trace `duration` minus `realtime`) during alignment.
+- **Unused CPUs, if cmobic_cpu fills.** VIRUSBREAKEND uses about 3 of
+  its 12 CPUs and REDUX about 5 of 12. This did not matter at
+  `queueSize` 50 (no queue waits over 2 min). If tasks now wait for
+  CPUs, consider lowering their `cpus`.
+- **ESVEE on 216 GB for a group larger than seen so far.** The two
+  largest groups (918 M and 935 M prep BAM records) passed. A larger
+  one may be killed at the prep BAM sort (exit 137) and retried on
+  432 GB, which costs about 4 h. Check for ESVEE retries.
+- **PURPLE on tumor-only samples** peaked at 69 to 73 GB of 96 GB.
+  Check for a PURPLE retry on a sample with a larger somatic VCF.
+
+Optional change, not applied: LINX visualiser on 12 CPUs
+(`withName: '.*:LINX_PLOTTING:LINX_VISUALISER' { cpus = 12 }`). It
+keeps 0.93 of its 6 CPUs busy and ORANGE waits for it; one group took
+58 min. Decide after seeing its times in the next run.
+
+How to check: join `out/pipeline_info/execution_trace_*.txt` with
+`sacct` on `native_id` (`ReqCPUS`, `ReqMem`, `Elapsed`, `TotalCPU`,
+`State`, `QOS`). Use the trace's `peak_rss` for memory, not `sacct`
+MaxRSS (section 17).

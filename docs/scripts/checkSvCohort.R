@@ -3,12 +3,14 @@
 # against the files it was built from. Evidence for docs/prism_methods.md;
 # rerun after a change to svCohort.R or a pipeline upgrade.
 #
-#   Rscript --vanilla Prism/docs/scripts/checkSvCohort.R [OUT_DIR] [DB_DIR]
+#   Rscript --vanilla Prism/docs/scripts/checkSvCohort.R [OUT_DIR] [DB_DIR] [HMF_DIR]
 #
 # OUT_DIR defaults to out. DB_DIR defaults to res/prism/db in the folder
-# that holds OUT_DIR (where postOA.sh writes). It reads the PURPLE SV
-# VCFs, the ESVEE breakend.tsv files, the table (TSV and Parquet) and its
-# column dictionary.
+# that holds OUT_DIR (where postOA.sh writes). HMF_DIR (the Hartwig
+# resource folder, for the driver gene panel) defaults to
+# ref_data_hmf_data_path in the newest OUT_DIR/pipeline_info/params_*.json,
+# as in postOA.sh. It reads the PURPLE SV VCFs, the ESVEE breakend.tsv
+# files, the table (TSV and Parquet) and its column dictionary.
 #
 # The table is unpacked (svCohort.R, "unpack"): fixed pairs split, PURPLE's
 # per-breakend lists reduced to each breakend's own value, fields equal on
@@ -40,7 +42,12 @@
 #                   one-breakend events are counted, not compared
 #                   (sgl_events_end_rows, sgl_end_rows): LINX writes them
 #                   at a location that is not a VCF record
-# Then: parquet_equal, every cell of the Parquet copy equals the TSV cell
+# Then: gene_roles_equal, start/end_gene_role recomputed from
+# linx_bnd_gene and the driver gene panel, element by element;
+# fusion_genes_equal, fusion_gene_5p/_3p recomputed from the fusion
+# breakend IDs and the LINX breakend table, and linx_fusion_name equal
+# to <5' gene>_<3' gene> or, for an enhancer partner, @<region>_<3' gene>;
+# parquet_equal, every cell of the Parquet copy equals the TSV cell
 # converted to the type in the column dictionary (an independent
 # reimplementation in R of tsvToParquet.py); the column dictionary, the
 # events by type and FILTER, and counts of the region and cross-sample
@@ -59,6 +66,16 @@ Sys.setenv(VROOM_CONNECTION_SIZE = 2^26)
 args <- commandArgs(trailingOnly = TRUE)
 out_dir <- path_abs(if (length(args) > 0) args[1] else "out")
 db_dir <- if (length(args) > 1) path_abs(args[2]) else path(path_dir(out_dir), "res", "prism", "db")
+hmf_dir <- if (length(args) > 2) {
+  path_abs(args[3])
+} else {
+  params <- sort(dir_ls(path(out_dir, "pipeline_info"), glob = "*/params_*.json"))
+  if (length(params) == 0) stop("No params_*.json in ", path(out_dir, "pipeline_info"), "; pass HMF_DIR", call. = FALSE)
+  hmf <- str_match(read_lines(params[length(params)]), '^\\s*"ref_data_hmf_data_path":\\s*"([^"]*)"')[, 2]
+  path(str_remove(hmf[!is.na(hmf)][1], "/$"))
+}
+panel_file <- path(hmf_dir, "common", "DriverGenePanel.38.tsv")
+if (!file_exists(panel_file)) stop("Driver gene panel not found: ", panel_file, call. = FALSE)
 
 read_chr <- function(file, ...) {
   read_tsv(
@@ -398,6 +415,55 @@ check_linx <- function() {
   all(res)
 }
 
+# ---- gene roles and fusion genes ----------------------------------------------
+#
+# Columns svCohort.R adds next to the LINX lists, recomputed from the
+# driver gene panel and the LINX breakend and fusion tables.
+
+panel <- read_chr(panel_file) |> select(gene, likelihoodType)
+stopifnot(!anyDuplicated(panel$gene))
+
+check_gene_roles <- function() {
+  ok <- map_lgl(c("start", "end"), \(s) {
+    n <- ev[[str_c(s, "_linx_bnd_n")]]
+    genes <- str_split(ev[[str_c(s, "_linx_bnd_gene")]], fixed("|"))
+    roles <- str_split(ev[[str_c(s, "_gene_role")]], fixed("|"))
+    row_ok <- pmap_lgl(list(n, genes, roles, ev[[str_c(s, "_gene_role")]]), \(k, g, r, cell) {
+      if (k == "") return(cell == "")
+      length(g) == as.integer(k) && length(r) == length(g) &&
+        all(coalesce(panel$likelihoodType[match(g, panel$gene)], "") == r)
+    })
+    if (!all(row_ok)) message(s, "_gene_role: ", sum(!row_ok), " rows differ")
+    message(s, "_gene_role elements: ", str_c(names(table(unlist(roles[n != ""]))), "=", table(unlist(roles[n != ""])),
+                                               collapse = " "))
+    all(row_ok)
+  })
+  all(ok)
+}
+
+check_fusion_genes <- function() {
+  f <- ev |> filter(linx_fusion_n != "")
+  sp <- \(x) str_split(x, fixed("|"))
+  long <- tibble(
+    group_id = rep(f$group_id, as.integer(f$linx_fusion_n)),
+    sample_id = rep(f$sample_id, as.integer(f$linx_fusion_n)),
+    id_5p = unlist(sp(f$linx_fusion_fivePrimeBreakendId)), id_3p = unlist(sp(f$linx_fusion_threePrimeBreakendId)),
+    name = unlist(sp(f$linx_fusion_name)), gene_5p = unlist(sp(f$fusion_gene_5p)), gene_3p = unlist(sp(f$fusion_gene_3p))
+  )
+  bnd_gene <- lx$breakend |> select(group_id, sample_id, id, gene)
+  long <- long |>
+    left_join(bnd_gene |> rename(want_5p = gene), by = c("group_id", "sample_id", id_5p = "id")) |>
+    left_join(bnd_gene |> rename(want_3p = gene), by = c("group_id", "sample_id", id_3p = "id"))
+  genes_ok <- !anyNA(long$want_5p) && !anyNA(long$want_3p) &&
+    all(long$gene_5p == long$want_5p & long$gene_3p == long$want_3p)
+  label_5p <- str_sub(long$name, 1, -(str_length(long$gene_3p) + 2))
+  plain <- long$name == str_c(long$gene_5p, "_", long$gene_3p)
+  enhancer <- !plain & str_c(label_5p, "_", long$gene_3p) == long$name & str_detect(label_5p, "^@[^_]+$")
+  message("fusion list elements: ", nrow(long), "; plain names ", sum(plain), ", enhancer-named ", sum(enhancer),
+          ", other ", sum(!plain & !enhancer))
+  genes_ok && all(plain | enhancer)
+}
+
 # ---- Parquet copy = TSV, typed by the dictionary ---------------------------
 
 typed <- function(x, type) {
@@ -463,9 +529,13 @@ checks <- c(
 )
 linx_ok <- check_linx()
 message("linx_tables_equal: ", linx_ok)
+roles_ok <- check_gene_roles()
+message("gene_roles_equal: ", roles_ok)
+fusion_ok <- check_fusion_genes()
+message("fusion_genes_equal: ", fusion_ok)
 pq_ok <- parquet_equal()
 message("parquet_equal: ", pq_ok)
-all_pass <- all(as.matrix(res[checks])) && linx_ok && pq_ok
+all_pass <- all(as.matrix(res[checks])) && linx_ok && roles_ok && fusion_ok && pq_ok
 message("all checks pass: ", all_pass)
 
 message("events by breakends, LINX and FILTER:")

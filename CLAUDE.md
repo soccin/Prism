@@ -32,9 +32,14 @@ sbatch ./Prism/runOncoanalyser.sh INPUT.csv [WORK_DIR]  # as a SLURM job
 sbatch ./Prism/qcCohort.sh [OUT_DIR]                    # QSEE over all groups into res/prism/qc/hmf/
 sbatch ./Prism/cohortReport.sh [-m MANIFEST] [-g GENES] [OUT_DIR]  # cohort report into res/prism/cohort/
 ./Prism/scripts/fetchTracks.sh [TRACK_DIR]              # once per site: region tracks for postOA.sh (login node, downloads only)
+sbatch ./Prism/scripts/popSvSites.sh [TRACK_DIR]        # once per site, after fetchTracks.sh: reduce the population SV VCFs to sites.tsv.gz
+sbatch --array=0-N ./Prism/bamEvidence.sh [OUT_DIR]     # per run, before postOA.sh: read counts at every SV breakend in every BAM (./Prism/bamEvidence.sh prints N)
 sbatch ./Prism/postOA.sh [-t TRACK_DIR] [OUT_DIR]       # cohort tables into res/prism/db/: stacked LINX tables, SV event table (Parquet, TSV), checked
 Rscript --vanilla Prism/docs/scripts/checkLinx.R [OUT_DIR]  # recheck the LINX rows of docs/ACTUAL_METHODS.md
-Rscript --vanilla Prism/docs/scripts/checkSvCohort.R [OUT_DIR] [DB_DIR]  # rebuild the sources from sv_cohort_filtered and compare; check the Parquet copy (postOA.sh step 4)
+Rscript --vanilla Prism/docs/scripts/checkSvCohort.R [OUT_DIR] [DB_DIR] [HMF_DIR]  # rebuild the sources from sv_cohort_filtered and compare; recompute gene roles and fusion genes; check the Parquet copy (postOA.sh step 4)
+Rscript --vanilla Prism/docs/scripts/spotCheckSvCohort.R OUT_DIR DB_DIR TRACK_DIR HMF_DIR  # recompute the derived columns of a random sample by a second method (as a job: about 10 minutes)
+Rscript --vanilla Prism/scripts/svReport.R [DB_DIR] [OUT_DIR]  # SV report workbook (PASS events, LINX genes and fusions, five flags, high-confidence set) into res/prism/sv/; about a minute
+Rscript --vanilla Prism/scripts/orangeSvReport.R [OUT_DIR] [DB_DIR] [SV_DIR]  # after svReport.R: ORANGE JSON SV records (fusions, somatic and germline breakends) of all samples, linked to SV table events and SV report flags, into res/prism/sv/orange_sv_report.xlsx; seconds
 Rscript Prism/docs/dbScheme/scripts/fetchOrangeDatamodel.R orange-v5.0.1 DATAMODEL_DIR  # ORANGE data model sources
 Rscript Prism/docs/dbScheme/scripts/buildScheme.R --datamodel DATAMODEL_DIR --out-dir out  # rebuild docs/dbScheme tables
 ```
@@ -78,9 +83,22 @@ stops the run, naming the column.
    field, the ESVEE `breakend.tsv` columns (joined on VCF ID = ESVEE
    `Id`), the LINX tables of step 1 (joined on `vcfIdStart`;
    per-transcript, fusion, link and driver rows as lists), region
-   tracks from `scripts/fetchTracks.sh`, and the same breakends in
-   other groups' PURPLE somatic, PURPLE germline and ESVEE unfiltered
-   calls. The section "unpack, deduplicate, event-level columns"
+   tracks from `scripts/fetchTracks.sh`, the same breakends in other
+   groups' PURPLE somatic, PURPLE germline and ESVEE unfiltered calls,
+   BAM read counts (`bamEvidence.sh`, `--bam-dir`) and population SV
+   sites (`scripts/popSvSites.sh`). It adds `{start,end}_gene_role`
+   (driver gene panel `likelihoodType` of each `linx_bnd_gene`
+   element) and `fusion_gene_5p`/`_3p` (breakend gene of each fusion's
+   5'/3' breakend ID; LINX names enhancer partners `@IGH` etc., so the
+   name is checked as `5p_3p` or `@region_3p`). These carry no
+   `linx_bnd_`/`linx_fusion_` prefix: `checkSvCohort.R` rebuilds the
+   LINX rows from the columns with those prefixes. The table starts
+   with a lead block of key columns (`lead_cols`, user decision; see
+   `docs/prism_methods.md` Layout). The column dictionary must equal
+   `docs/sv_cohort_filtered.columns.csv` (`--dict-ref`), or the run
+   stops before writing the table and writes
+   `sv_cohort_filtered.columns.new.csv` to review and copy over it.
+   The section "unpack, deduplicate, event-level columns"
    reshapes it for analysis (user decisions), each rule checked on
    every row: exact duplicate columns dropped (ESVEE columns repeating
    VCF fields, StrandBias = FORMAT SB to two decimals, MATEID,
@@ -104,18 +122,67 @@ stops the run, naming the column.
    column. Any value that does not fit its type stops it (exit 1).
 4. `docs/scripts/checkSvCohort.R` undoes every unpacking rule, rebuilds
    every VCF record and ESVEE row, compares them with the source files,
+   recomputes the gene roles and fusion genes,
    and checks every Parquet cell against the TSV (`parquet_equal`, with
    nanoparquet). It exits 1 on any failure, which fails the job.
 
 `postOA.sh` checks before it starts that the R package `nanoparquet` is
 installed and that `python3` can import `pyarrow` (installed per user:
-`python3 -m pip install --user pyarrow`).
+`python3 -m pip install --user pyarrow`). `bamEvidence.sh` checks that
+`python3` can import `pysam`.
+
+Inputs of step 2 made by other jobs: `bamEvidence.sh` (array job, one
+task per BAM; `scripts/bamEvidence.py` counts each BAM at every
+breakend of the cohort into `res/prism/db/bam_evidence/`; it needs
+`samples.tsv` from step 1) and `scripts/popSvSites.sh` (bcftools query
+of the population SV VCFs into `TRACK_DIR/<source>/sites.tsv.gz`).
 
 `docs/prism_methods.md` is the methods record of every post-pipeline
 step: exact definitions taken from the code, for the client and for
 papers. When a post-pipeline script changes behavior, update its
 section there, and rerun `docs/scripts/checkSvCohort.R` after a change
-to `svCohort.R`.
+to `svCohort.R`. `checkSvCohort.R` does not recompute the computed
+columns (region, `xs_*`, `bam_*`, population); after a change to them,
+also run `docs/scripts/spotCheckSvCohort.R` as a job and record the
+result in `prism_methods.md` section 1.5.
+
+`scripts/svReport.R` turns the SV table into the workbook people read
+(`res/prism/sv/prism_sv_report.xlsx`): PASS events only, gene and
+fusion columns from LINX only (no other annotation; user decision),
+five evidence flags, high confidence = no flag (user decision
+2026-11-23), gene and fusion sheets counted in tumors, a `rule` sheet
+and a `glossary` sheet. Same-gene LINX fusions (`gene_5p` = `gene_3p`)
+join two parts of one gene (the user treats them as cryptic splice
+products; LINX calls no splicing), left out of the fusion sheet
+(`fusions_real`) and the
+gene fusion counts, kept on the events sheets; `genes`
+keeps genes with 2 or more tumors in at least one count (user
+decisions). It stops if an SV table column it reads is missing, if a
+column has no glossary entry or an entry matches no column (all its
+checks: `docs/SV_REPORT.md` section 9; what "no flag" does and does
+not prove: section 6.7). `docs/SV_REPORT.md` describes it in full,
+including the LINX rules behind each gene column; change the two
+together, and rerun the report after every `postOA.sh` build. The SV
+table is the evidence store behind the report, not the deliverable.
+
+`scripts/orangeSvReport.R` writes `res/prism/sv/orange_sv_report.xlsx`:
+the SV records of every ORANGE JSON (`linx.fusions`,
+`linx.somaticBreakends`, `linx.germlineBreakends`), ORANGE fields
+unchanged, each placed on its SV table event (sample and LINX `svId`;
+fusions through their reported `fusion.tsv` row) with the event's
+FILTER and SV report flags added. ORANGE 5.0.1 lists reported LINX
+fusions and REPORTED breakends and tests no FILTER value; the script
+stops if the JSON is not exactly those LINX rows. Run it after
+`svReport.R`; described in `docs/SV_REPORT.md` section 13.
+
+Any statement about what a Hartwig tool does goes into
+`docs/ACTUAL_METHODS.md` (or `SV_REPORT.md`) only after it is checked
+in the tool's source at the tag the run used (sparse clone of
+`hartwigmedical/hmftools` at e.g. `linx-v2.3.1`) and, where possible,
+against the run's files; cite the class and method. Where the README
+disagrees, record it in `ACTUAL_METHODS.md` section 5. The LINX README
+is wrong about `svs.tsv` `geneStart`/`geneEnd`, `breakend.tsv` rows and
+the artifact rules.
 
 Post-pipeline layout (user decision): deliverables go under
 `res/prism/` in the folder that holds `out/` (the project folder), with
@@ -132,11 +199,12 @@ samplesheet.
 Checks after a change (there is no test suite):
 
 ```
-bash -n Prism/runOncoanalyser.sh Prism/deliverLocal.sh Prism/qcCohort.sh Prism/cohortReport.sh Prism/postOA.sh Prism/scripts/fetchTracks.sh Prism/docs/scripts/countVcfFilters.sh
-shellcheck -x Prism/runOncoanalyser.sh Prism/00.SETUP.sh Prism/deliverLocal.sh Prism/qcCohort.sh Prism/cohortReport.sh Prism/postOA.sh Prism/scripts/fetchTracks.sh Prism/docs/scripts/countVcfFilters.sh
-Rscript --vanilla -e "for (f in c('Prism/scripts/cohortReport.R', 'Prism/scripts/postOA.R', 'Prism/scripts/svCohort.R', 'Prism/docs/scripts/checkLinx.R', 'Prism/docs/scripts/checkSvCohort.R')) invisible(parse(f))"
+bash -n Prism/runOncoanalyser.sh Prism/deliverLocal.sh Prism/qcCohort.sh Prism/cohortReport.sh Prism/postOA.sh Prism/bamEvidence.sh Prism/scripts/fetchTracks.sh Prism/scripts/popSvSites.sh Prism/docs/scripts/countVcfFilters.sh
+shellcheck -x Prism/runOncoanalyser.sh Prism/00.SETUP.sh Prism/deliverLocal.sh Prism/qcCohort.sh Prism/cohortReport.sh Prism/postOA.sh Prism/bamEvidence.sh Prism/scripts/fetchTracks.sh Prism/scripts/popSvSites.sh Prism/docs/scripts/countVcfFilters.sh
+Rscript --vanilla -e "for (f in c('Prism/scripts/cohortReport.R', 'Prism/scripts/postOA.R', 'Prism/scripts/svCohort.R', 'Prism/docs/scripts/checkLinx.R', 'Prism/docs/scripts/checkSvCohort.R', 'Prism/docs/scripts/spotCheckSvCohort.R', 'Prism/scripts/svReport.R', 'Prism/scripts/orangeSvReport.R', 'Prism/examples/readSvCohort.R')) invisible(parse(f))"
 Rscript --vanilla -e "for (f in Sys.glob('Prism/docs/dbScheme/scripts/*.R')) invisible(parse(f))"
 python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' Prism/scripts/tsvToParquet.py
+python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' Prism/scripts/bamEvidence.py
 Prism/bin/nextflow lint Prism/conf/iris.config
 Prism/bin/nextflow -c Prism/conf/iris.config config -flat
 ```

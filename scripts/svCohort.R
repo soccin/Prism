@@ -41,12 +41,18 @@
 #                     breakend (<source>_w100_*)
 #   linx_*            the LINX svs.tsv row, its cluster, and lists of its
 #                     links, fusions and cluster drivers
+#   start/end_gene_role, fusion_gene_5p/_3p
+#                     the driver gene panel role (ONCO, TSG) of each gene
+#                     of start/end_linx_bnd_gene, and the gene at each
+#                     fusion's 5' and 3' breakend (lists aligned with the
+#                     LINX lists)
 #   xs_pair_*         the same two-breakend event in other groups
 #   <source>_bp100_*, <source>_ro50_*
 #                     the same event in a population SV call set, by
 #                     breakpoints or by reciprocal overlap
 # A cell holds one value, except where the source holds a list of any
 # length; lists are joined with "|" (VCF lists with ",") in source order.
+# The table starts with a block of key columns (see "column order").
 # Fixed pairs (AD, CIPOS, IHOMPOS, TPR) are split into two columns; columns
 # that repeat another column are dropped; each of these steps is checked on
 # every row (see "unpack" below). Derived columns are documented in the
@@ -381,13 +387,49 @@ bnd_side <- lx_bnd |>
 if (nrow(bnd_side) != nrow(lx_bnd) || any(!lx_bnd$isStart %in% c("true", "false"))) {
   stop("LINX breakend rows without an event, or with isStart not true/false", call. = FALSE)
 }
+# Gene roles: likelihoodType (ONCO or TSG) of each gene in the driver gene
+# panel LINX reads (Hartwig common/DriverGenePanel.38.tsv); genes not on
+# the panel have none.
+panel_file <- path(hmf_dir, "common", "DriverGenePanel.38.tsv")
+if (!file_exists(panel_file)) stop(str_glue("Driver gene panel not found: {panel_file}"), call. = FALSE)
+panel <- read_chr(panel_file) |> select(gene, role = likelihoodType)
+if (anyDuplicated(panel$gene) > 0) stop(str_glue("Genes listed twice in {panel_file}"), call. = FALSE)
+if (!all(panel$role %in% c("ONCO", "TSG"))) {
+  stop(str_glue("likelihoodType other than ONCO or TSG in {panel_file}"), call. = FALSE)
+}
+log_msg("driver gene panel: {sum(panel$role == 'ONCO')} ONCO, {sum(panel$role == 'TSG')} TSG")
+
 for (s in c("start", "end")) {
-  side_bnd <- bnd_side |>
-    filter(side == s) |>
+  side_rows <- bnd_side |> filter(side == s)
+  side_bnd <- side_rows |>
     select(group_id, sample_id, svId, all_of(bnd_cols)) |>
     collapse_rows(c("group_id", "sample_id", "svId"), str_c(s, "_linx_bnd_"))
+  # The role of each row's gene, from the same rows in the same order, so
+  # element i lines up with element i of {s}_linx_bnd_gene. Not a
+  # _linx_bnd_ column: that prefix is for LINX breakend.tsv columns only.
+  side_role <- side_rows |>
+    left_join(panel, by = "gene", relationship = "many-to-one") |>
+    select(group_id, sample_id, svId, role) |>
+    collapse_rows(c("group_id", "sample_id", "svId"), str_c(s, "_gene_"))
+  side_bnd <- side_bnd |> inner_join(side_role, by = c("group_id", "sample_id", "svId"), relationship = "one-to-one")
+  n_col <- str_c(s, "_gene_n")
+  if (nrow(side_bnd) != nrow(side_role) || any(side_bnd[[n_col]] != side_bnd[[str_c(s, "_linx_bnd_n")]])) {
+    stop(str_glue("{s}_gene_role: list lengths differ from {s}_linx_bnd_n"), call. = FALSE)
+  }
+  side_bnd[[n_col]] <- NULL
   events <- events |>
     left_join(side_bnd, by = c("group_id", "sample_id", linx_svId = "svId"))
+}
+# Element by element: the role is the panel's role of the gene in the same
+# position (empty: not on the panel).
+for (s in c("start", "end")) {
+  genes <- str_split(events[[str_c(s, "_linx_bnd_gene")]], fixed(SEP))
+  roles <- str_split(events[[str_c(s, "_gene_role")]], fixed(SEP))
+  ok <- map2_lgl(genes, roles, \(g, r) {
+    if (length(g) == 1 && is.na(g)) return(length(r) == 1 && is.na(r))
+    length(g) == length(r) && all(coalesce(panel$role[match(g, panel$gene)], "") == r)
+  })
+  if (!all(ok)) stop(str_glue("{s}_gene_role does not line up with {s}_linx_bnd_gene"), call. = FALSE)
 }
 n_bnd <- sum(as.integer(events$start_linx_bnd_n), as.integer(events$end_linx_bnd_n), na.rm = TRUE)
 if (n_bnd != nrow(lx_bnd)) {
@@ -398,18 +440,37 @@ log_msg("LINX breakend: {nrow(lx_bnd)} rows placed; {n_sgl_end} single-breakend 
 
 # Fusions, per SV: each fusion is listed for the SV(s) of its 5' and 3'
 # breakends, with the side.
-be_sv <- lx_bnd |> select(group_id, sample_id, id, svId)
-be_5p <- be_sv |> rename(sv_5p = svId)
-be_3p <- be_sv |> rename(sv_3p = svId)
+# The 5' and 3' genes of each fusion: the LINX breakend gene of
+# fivePrimeBreakendId and threePrimeBreakendId (not split from the name;
+# see the check below).
+be_sv <- lx_bnd |> select(group_id, sample_id, id, svId, gene)
+be_5p <- be_sv |> rename(sv_5p = svId, gene_5p = gene)
+be_3p <- be_sv |> rename(sv_3p = svId, gene_3p = gene)
 fusions <- linx$fusion |>
-  left_join(be_5p, by = c("group_id", "sample_id", fivePrimeBreakendId = "id")) |>
-  left_join(be_3p, by = c("group_id", "sample_id", threePrimeBreakendId = "id"))
+  left_join(be_5p, by = c("group_id", "sample_id", fivePrimeBreakendId = "id"), relationship = "many-to-one") |>
+  left_join(be_3p, by = c("group_id", "sample_id", threePrimeBreakendId = "id"), relationship = "many-to-one")
+if (anyNA(fusions$sv_5p) || anyNA(fusions$sv_3p)) {
+  stop("LINX fusion breakend ID without a breakend.tsv row", call. = FALSE)
+}
+# The name is <5' gene>_<3' gene>, except that LINX names an enhancer
+# partner on the 5' side by its region (@IGH, @IGK, @BCL11B), where the
+# breakend's gene is another (IGHA1, RPL3P4).
+name_5p <- str_sub(fusions$name, 1, -(str_length(fusions$gene_3p) + 2))
+plain <- fusions$name == str_c(fusions$gene_5p, "_", fusions$gene_3p)
+enhancer <- str_c(name_5p, "_", fusions$gene_3p) == fusions$name & str_detect(name_5p, "^@[^_]+$")
+if (!all(plain | enhancer)) {
+  bad <- fusions |> filter(!(plain | enhancer))
+  stop(str_glue("LINX fusion name is not <5' gene>_<3' gene> or @<region>_<3' gene>: {bad$name[1]}"), call. = FALSE)
+}
+log_msg("LINX fusions: {nrow(fusions)}; {sum(!plain)} named by an enhancer region on the 5' side")
 fusion_cols <- setdiff(names(linx$fusion), c("group_id", "sample_id"))
 fusion_by_sv <- bind_rows(
-  fusions |> transmute(group_id, sample_id, svId = sv_5p, side = "5p", across(all_of(fusion_cols))),
-  fusions |> transmute(group_id, sample_id, svId = sv_3p, side = "3p", across(all_of(fusion_cols)))
+  fusions |> transmute(group_id, sample_id, svId = sv_5p, side = "5p", across(all_of(fusion_cols)), gene_5p, gene_3p),
+  fusions |> transmute(group_id, sample_id, svId = sv_3p, side = "3p", across(all_of(fusion_cols)), gene_5p, gene_3p)
 ) |>
-  collapse_rows(c("group_id", "sample_id", "svId"), "linx_fusion_")
+  collapse_rows(c("group_id", "sample_id", "svId"), "linx_fusion_") |>
+  # Not linx_fusion_ columns: that prefix is for LINX fusion.tsv columns only.
+  rename(fusion_gene_5p = linx_fusion_gene_5p, fusion_gene_3p = linx_fusion_gene_3p)
 links_by_sv <- bind_rows(
   linx$links |> mutate(svId = lowerSvId),
   linx$links |> filter(upperSvId != lowerSvId) |> mutate(svId = upperSvId)
@@ -1061,17 +1122,37 @@ log_msg("  {length(event_cols)} event-level columns")
 
 # ---- column order and dictionary ---------------------------------------
 
+# First the lead block (user decision): the event, the genes at each
+# breakend with LINX's annotation, fusions, drivers, cluster, copy number
+# and support; then the other identity columns; then every other column in
+# the order below.
+GENE_COLS <- c(
+  "linx_bnd_gene", "gene_role", "linx_bnd_canonical", "linx_bnd_regionType", "linx_bnd_codingType",
+  "linx_bnd_disruptive", "linx_bnd_exonUp", "linx_bnd_exonDown", "linx_bnd_undisruptedCopyNumber",
+  "linx_bnd_reportedStatus"
+)
+lead_cols <- c(
+  "group_id", "sample_id", "event_key", "run_mode", "filter", "linx_type", "info_SVTYPE",
+  "start_chrom", "start_pos", "start_orient", "end_chrom", "end_pos", "end_orient", "length",
+  "start_info_CIPOS_lower", "start_info_CIPOS_upper", "end_info_CIPOS_lower", "end_info_CIPOS_upper",
+  str_c("start_", GENE_COLS), str_c("end_", GENE_COLS),
+  "fusion_gene_5p", "fusion_gene_3p", "linx_fusion_phased", "linx_fusion_reported", "linx_fusion_reportedType",
+  "linx_cluster_driver_gene", "linx_cluster_driver_eventType",
+  "linx_cluster_category", "linx_cluster_resolvedType", "linx_cluster_clusterCount",
+  "start_info_PURPLE_CN_CHANGE", "end_info_PURPLE_CN_CHANGE", "info_PURPLE_JCN", "start_info_PURPLE_AF", "tumor_VF"
+)
 key_cols <- c(
-  "group_id", "sample_id", "normal_id", "run_mode", "event_key",
-  "n_breakends", "in_linx", "linx_start_is_vcf_start", "same_chrom", "length",
+  "normal_id", "n_breakends", "in_linx", "linx_start_is_vcf_start", "same_chrom",
   "start_coords", "end_coords", "start_id", "end_id"
 )
-side_cols <- function(s) str_subset(names(events), str_glue("^{s}_")) |> setdiff(key_cols)
-linx_cols <- str_subset(names(events), "^linx_") |> setdiff(key_cols)
+stopifnot(!anyDuplicated(c(lead_cols, key_cols)))
+front <- c(lead_cols, key_cols)
+side_cols <- function(s) str_subset(names(events), str_glue("^{s}_")) |> setdiff(front)
+linx_cols <- str_subset(names(events), "^linx_") |> setdiff(front)
 pair_cols <- str_subset(names(events), "^xs_pair_")
 n_cols <- ncol(events)
 events <- events |>
-  select(all_of(key_cols), all_of(event_cols), all_of(side_cols("start")), all_of(side_cols("end")),
+  select(all_of(front), all_of(setdiff(event_cols, front)), all_of(side_cols("start")), all_of(side_cols("end")),
          all_of(linx_cols), all_of(pair_cols), all_of(pop_event_cols), everything())
 stopifnot(ncol(events) == n_cols)
 
@@ -1296,6 +1377,19 @@ describe <- function(col) {
     str_starts(base, "bam_") ~ str_c(where, bam_desc(base)),
     str_detect(base, POP_POINT_RE) ~ str_c(where, pop_desc(base)),
     str_detect(col, POP_EVENT_RE) ~ pop_desc(col),
+    base == "gene_role" ~ str_c(
+      where, "role of each gene of linx_bnd_gene, in the same order: likelihoodType (ONCO or TSG) in the ",
+      "driver gene panel LINX reads (HMF_DIR/common/DriverGenePanel.38.tsv); empty element: gene not on the ",
+      "panel; joined with |. Hartwig's pan-cancer roles, mostly from solid tumors (JAK1 and ERBB4 are TSG there)"
+    ),
+    col %in% c("fusion_gene_5p", "fusion_gene_3p") ~ str_c(
+      "gene of each fusion's ", if_else(col == "fusion_gene_5p", "5'", "3'"),
+      " breakend: LINX breakend.tsv gene of ",
+      if_else(col == "fusion_gene_5p", "fivePrimeBreakendId", "threePrimeBreakendId"),
+      ", one value per fusion in the order of the linx_fusion_* lists, joined with |. linx_fusion_name is ",
+      "<5' gene>_<3' gene>, except where LINX names an enhancer partner on the 5' side by its region ",
+      "(@IGH, @IGK, @BCL11B): then fusion_gene_5p is the gene at the breakend (checked)"
+    ),
     str_starts(col, "linx_cluster_driver_") ~ str_c(
       "LINX drivers.tsv column ", str_remove(col, "^linx_cluster_driver_"), " for the event's cluster, joined with |"
     ),
@@ -1348,6 +1442,7 @@ FIXED_TYPE <- c(
 LINX_SEMI_LISTS <- c("linx_clusterReason", "linx_lineTypeStart", "linx_lineTypeEnd", "linx_geneStart", "linx_geneEnd")
 LIST_FAMILIES <- c(
   "^(start|end)_linx_bnd_" = "{side}_linx_bnd_n", "^linx_fusion_" = "linx_fusion_n",
+  "^(start|end)_gene_role$" = "{side}_linx_bnd_n", "^fusion_gene_(5p|3p)$" = "linx_fusion_n",
   "^linx_link_" = "linx_link_n", "^linx_cluster_driver_" = "linx_cluster_driver_n"
 )
 column_type <- function(col) {
@@ -1494,13 +1589,15 @@ log_msg("column dictionary -> {dict_file}")
 manifest_file <- path(db_dir, "manifest.tsv")
 table_desc <- str_c(
   "One row per somatic SV event of PURPLE's SV VCF (all FILTER values; nothing left out), ",
-  "with every field PURPLE, ESVEE and LINX wrote for it, region tracks and the same breakends in ",
-  "other groups; fixed pairs split, repeated columns dropped. Derived columns are marked in the ",
-  "column dictionary."
+  "with every field PURPLE, ESVEE and LINX wrote for it, the driver gene panel role of each gene and ",
+  "the 5' and 3' gene of each fusion, region tracks, the same breakends in other groups, read counts ",
+  "from the BAMs and matching sites of population SV call sets; key columns first, fixed pairs split, ",
+  "repeated columns dropped. Derived columns are marked in the column dictionary."
 )
+table_tools <- "PURPLE, ESVEE, LINX, driver gene panel, region tracks, BAMs, population SV call sets"
 own_rows <- tibble(
   file = c("sv_cohort_filtered.parquet", "sv_cohort_filtered.tsv.gz", "sv_cohort_filtered.columns.tsv"),
-  tool = c("PURPLE, ESVEE, LINX, region tracks", "PURPLE, ESVEE, LINX, region tracks", ""),
+  tool = c(table_tools, table_tools, ""),
   mode = c("somatic", "somatic", ""),
   groups = c(rep(as.character(n_distinct(events$group_id)), 2), ""),
   rows = c(rep(as.character(nrow(events)), 2), as.character(nrow(dict))),

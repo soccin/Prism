@@ -6,7 +6,8 @@ does not set, and some are wrong. This file records what was checked
 against the code that ran and the files it wrote, step by step. Start
 here before describing methods in a paper or report.
 
-Tool names are explained in `OA_AlgoKey.md`.
+Tool names are explained in `OA_AlgoKey.md`. What Prism does after the
+pipeline (`postOA.sh` and later steps) is in `prism_methods.md`.
 
 ## Status labels
 
@@ -80,7 +81,7 @@ PURPLE -> purple/<T>.purple.somatic.vcf.gz       matched: every PAVE record. tum
 |---|---|---|---|---|
 | SAGE | 0.56 to 2.8 million per sample; 0.3% to 2.8% PASS | Hard filters drop low-quality candidates before writing. Soft filters (tumor quality and support, mapping quality, edge distance, jitter, and germline evidence from the normal) label the rest. TINC recovery is on (`-run_tinc`) | CONFIRMED (labels, counts, option); README (filter rules) | Counts; `sage_somatic.*.command.sh`; SAGE README "Hard Filters", "Soft Filters", "TINC" |
 | PAVE | 8,022 to 27,995: exactly SAGE's PASS records, in every sample | **Drops every record that is not PASS in SAGE's file.** About 97% to 99.7% of SAGE's records go here | CONFIRMED, VARIANCE | Counts (PAVE records = SAGE PASS records in 9 of 9). Code (`pave-v1.9`): `PaveConfig.java` defaults the filter type to PASS when no `filter_type` is given; `ChromosomeTask.java` `processVariant()` returns without writing non-PASS records. `pave_somatic.*.command.sh` sets no `filter_type`. `.command.log`: "complete for N variants" against "writing M pending variants" |
-| PAVE | 27% of its records labeled (over the 9 samples) | Adds FILTER `PON` (in the panel of normals: hotspot tier 6+ samples with 5+ reads, panel tier 3+ with 3+, other 3+ samples) and `PONGnomad` (gnomAD frequency above the threshold). Writes these records too. No artefact PON (passed only in targeted mode) | CONFIRMED | Counts; `pave_somatic.*.command.sh` (`-pon_file`, `-gnomad_freq_dir`, no `-write_pass_only`, no `-pon_artefact_file`); `.command.log` "loaded PON filter"; `ChromosomeTask.java` `applyFilters()` |
+| PAVE | 27% of its records labeled (over the 9 samples) | Adds FILTER `PON` (in the panel of normals: hotspot tier 6+ samples with 5+ reads, panel tier 3+ with 3+, other 3+ samples) and `PONGnomad` (gnomAD frequency above the threshold). Writes these records too. No artifact PON (passed only in targeted mode) | CONFIRMED | Counts; `pave_somatic.*.command.sh` (`-pon_file`, `-gnomad_freq_dir`, no `-write_pass_only`, no `-pon_artefact_file`); `.command.log` "loaded PON filter"; `ChromosomeTask.java` `applyFilters()` |
 | PURPLE | Same as PAVE; 5,016 to 20,642 PASS | Keeps every PAVE record with its FILTER value; adds no somatic filter. Adds VAF and copy number, biallelic status, clonality, driver annotation, the REPORTED flag | CONFIRMED | Counts (equal in 9 of 9, FILTER values identical); `purple.*.command.log` "loaded N somatic variants" |
 
 **VARIANCE, PAVE.** The PAVE README lists `read_pass_only` ("Only process
@@ -148,6 +149,14 @@ Counts are VCF records (breakends; a two-sided SV has two records).
 | PURPLE TINC recovery | 4 of 9 samples: 28 to 223 SVs (45 to 372 breakends) | When PURPLE measures tumor-in-normal contamination, it moves germline SVs that the contamination explains into the somatic file and out of the germline file | CONFIRMED, VARIANCE | `purple.*.command.log` "tincLevel(X) recovered N germline SVs" in exactly those 4 samples; the somatic file gains and the germline file loses the same number of records |
 | PURPLE germline SVs | ESVEE germline minus the recovered SVs | | CONFIRMED | Counts |
 
+**ESVEE `breakend.tsv`.** Its `Id` is the VCF ID of the breakend in the
+ESVEE VCFs and in PURPLE's SV VCF, with the same chromosome, position
+and orientation; orientation is 1 when the VCF ALT starts with the
+reference base, else -1. Inferred breakends are PURPLE's and have no
+row. CONFIRMED: one group fully (2,128 records; all 1,910 non-inferred
+match); `scripts/svCohort.R` checks every group on every run and stops
+on a mismatch.
+
 **VARIANCE, PURPLE inferred breakends.** The PURPLE README calls them
 type `INF`. In the VCF they have SVTYPE `BND` and FILTER `INFERRED`, so
 they are not PASS. Select them by FILTER, not by SVTYPE.
@@ -173,12 +182,37 @@ when it reads them:
 
 | Tool | Selection | Status |
 |---|---|---|
-| LINX | Leaves out PON-filtered SVs. Marks likely artefacts (short foldback inversions, isolated translocations and single breakends without copy number support, pairs of inferred breakends) as ARTIFACT and excludes them from clustering; they stay in its tables | README |
+| LINX | Somatic: analyzes the SVs with FILTER PASS or INFERRED and leaves out PON. Germline: keeps PASS and PON. Marks likely artifacts as ARTIFACT; they stay in its tables (details below) | CONFIRMED (selection, tables); README (artifact rules) |
 | CHORD | PASS variants only, unless `-include_non_pass` is set | README; flag not yet checked in `chord.*.command.sh` |
 | LILAC | PASS variants in coding or splice regions of the HLA genes | README |
 | NEO | PASS point mutations with missense, frameshift, inframe or stop-lost effect | README |
 | CUPPA | Ignores passenger indels in repeats longer than 6 bases, and in MSI samples | README |
 | ORANGE | PASS variants with the REPORTED flag; reported fusions and breakends; drivers not NOT_REPORTED; viruses not blacklisted; UGT1A1 removed | CONFIRMED (source code at `orange-v5.0.1`; counts match in all 14 samples). See `dbScheme/orange.md` |
+
+### LINX 2.3.1
+
+LINX makes no SV calls. It reads PURPLE's SV VCFs and copy number and
+annotates, clusters and chains the SVs. `postOA.sh` aggregates its
+tables and joins them to the SV events (`prism_methods.md` section 1).
+Recheck with:
+
+```
+Rscript --vanilla Prism/docs/scripts/checkLinx.R out
+```
+
+| What | Status | Evidence |
+|---|---|---|
+| Arguments. Somatic: `-sv_vcf purple/<T>.purple.sv.vcf.gz -purple_dir purple -known_fusion_file -driver_gene_panel -write_vis_data -write_neo_epitopes`. Germline: `-sv_vcf <T>.purple.sv.germline.vcf.gz -germline -driver_gene_panel`. No filter options | CONFIRMED | `linx_somatic.*.command.sh` (14 groups), `linx_germline.*.command.sh` (9 matched) |
+| Somatic input: LINX loads every record of `purple.sv.vcf.gz` (log "loaded N SV data records"), then analyzes only the SVs with FILTER PASS, INFERRED or empty (log "procesed M SVs") | CONFIRMED | `SvFileLoader.loadSomaticVariantsFromVcf` (`AlwaysPassFilter`) and `createSvData` at `linx-v2.3.1`; log lines |
+| `linx.svs.tsv` holds exactly the PASS and INFERRED SVs: 52 to 6,389 per sample. The PON records (91 to 556 per matched sample; none are left in tumor-only PURPLE files) are not in it | CONFIRMED | 14 of 14: rows = "procesed" count; 2 x two-breakend SVs + single-breakend SVs = PASS + INFERRED records |
+| Inferred breakends have type `INF` in `linx.svs.tsv` | CONFIRMED | 9 of 9 matched: INF rows = FILTER INFERRED records |
+| For an SV whose two breakends have the same position, `vcfIdEnd` often repeats `vcfIdStart`, so the mate's VCF ID is not in the table: 10 to 17 SVs in each tumor-only sample (65 in total). The 2 such SVs in matched samples have both IDs. Join LINX to the VCF on `vcfIdStart` | CONFIRMED | Counts |
+| Germline input: LINX keeps the records with FILTER PASS or PON (or empty). `linx.germline.svs.tsv` holds every SV of `purple.sv.germline.vcf.gz` (all PASS here): 19,412 to 34,172 per sample | CONFIRMED | `GermlineFilter` at `linx-v2.3.1`; 9 of 9: log "loaded" = "procesed" = rows |
+| SVs in clusters of category ARTIFACT stay in `linx.svs.tsv`: 9 to 2,302 per sample | CONFIRMED (in the table); README (rules) | `linx.clusters.tsv` `category` |
+| `linx.driver.catalog.tsv` = the REPORTED rows of `purple.driver.catalog.somatic.tsv`, unchanged, plus LINX rows with driver DISRUPTION (all REPORTED here; 1 to 25 per sample). PURPLE's NOT_REPORTED rows are not in it | CONFIRMED | 14 of 14: full-row match |
+| `disruptive` (`breakend.tsv`) is set for every gene and transcript; the driver gene panel is not used. It is true when the breakend lies in an exon or intron of the transcript, then set false for: inferred breakends (type INF); intronic breakends of LINE clusters; DEL, DUP or INS with both ends in the same intron of the transcript; a DUP alone in its cluster unless both ends are in the same transcript (with exceptions for a duplicated first exon); and, in chains, breakends that return to the same intron within 5,000 bases without crossing a splice acceptor, assembled links inside one intron when both chain ends are outside genes, and linked intronic pairs whose other ends are both outside genes. It uses position and SV structure only: no read support, quality or ARTIFACT test. 48% of the canonical disruptive breakends in this run are in ARTIFACT clusters | CONFIRMED | `BreakendTransData` (initial value), `DisruptionFinder.markTranscriptsDisruptive` and chain checks, `SvVarData.isSimpleType` at `linx-v2.3.1`; counts |
+| `reportedStatus` REPORTED on a breakend: disruptive, on a gene of the driver gene panel with disruption reporting on, and on its canonical or listed transcript. This is the only place the panel enters | CONFIRMED | `DisruptionFinder.findReportableDisruptions`, `getDisruptionGeneTranscripts` at `linx-v2.3.1` |
+| Keys: `breakend.svId` and `links.lowerSvId`/`upperSvId` are in `svs.svId`; `svs.clusterId` = `clusters.clusterId`; `clusterCount` sums to the `svs` rows; fusion breakend IDs are in `breakend.id`; `drivers.clusterId` is in `clusters` or -1 | CONFIRMED | 14 of 14 |
 
 ## 5. Other variances from the READMEs found so far
 
@@ -205,5 +239,9 @@ Details are in `dbScheme/group_a.md` and `dbScheme/orange.md`.
   moved (PURPLE code at `purple-v4.4`).
 - SAGE hard-filter settings actually used (`sage_*.command.sh`, SAGE
   code at `sage-v5.0.2`).
-- Check the `command.sh` of LINX, CHORD, LILAC, NEO, CUPPA and SIGS for
+- Check the `command.sh` of CHORD, LILAC, NEO, CUPPA and SIGS for
   options that change the README defaults.
+- LINX: the rules that mark a cluster ARTIFACT (LINX code at
+  `linx-v2.3.1`), and why `vcfIdEnd` repeats `vcfIdStart` for SVs whose
+  breakends share a position. Whether fusion finding is limited to any
+  gene list.
